@@ -45,4 +45,17 @@ jobs:
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
       - name: Preload the next uncached timetable batch
-        run: python cloud/collector/run_cloud_sync.py
+        shell: bash
+        run: |
+          set +e
+          python cloud/collector/run_cloud_sync.py
+          code=$?
+          set -e
+          if [ "$code" -eq 1 ]; then
+            echo "Fatal preload error."
+            exit 1
+          fi
+          if [ "$code" -eq 2 ]; then
+            echo "Some timetable groups had transient errors; successful groups were still cached and the next run will retry the rest."
+          fi
+          exit 0

@@ -86,7 +86,17 @@ jobs:
           # not wait for another GitHub scheduler start between checks.
           for round in 1 2 3 4 5; do
             echo "=== hot sync round $round/5 ==="
+            set +e
             TUS_SYNC_SCOPE=hot python cloud/collector/run_cloud_sync.py
+            code=$?
+            set -e
+            if [ "$code" -eq 1 ]; then
+              echo "Fatal hot-sync error."
+              exit 1
+            fi
+            if [ "$code" -eq 2 ]; then
+              echo "Some hot groups had transient errors; successful groups were updated and the next round will retry."
+            fi
             if [ "$round" -lt 5 ]; then
               sleep 45
             fi
@@ -94,4 +104,15 @@ jobs:
 
           # Keep push-only/recent groups fresh as the slower background tier.
           echo "=== background active sync ==="
+          set +e
           python cloud/collector/run_cloud_sync.py
+          code=$?
+          set -e
+          if [ "$code" -eq 1 ]; then
+            echo "Fatal background-sync error."
+            exit 1
+          fi
+          if [ "$code" -eq 2 ]; then
+            echo "Some background groups had transient errors; successful groups were updated."
+          fi
+          exit 0
