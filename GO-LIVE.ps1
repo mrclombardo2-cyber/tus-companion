@@ -350,7 +350,24 @@ try {
     }
 
     $repoExists = Test-GitHubRepo $repoFull
-    $origin = (& $script:Git remote get-url origin 2>$null | Out-String).Trim()
+
+    # Probe remotes without calling `git remote get-url origin` when origin does
+    # not exist. With ErrorActionPreference=Stop, Git's harmless
+    # "No such remote 'origin'" stderr can otherwise terminate the whole deploy.
+    $origin = ''
+    $oldErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $remoteNames = @(& $script:Git remote 2>$null)
+        if ($LASTEXITCODE -eq 0 -and ($remoteNames -contains 'origin')) {
+            $origin = ((& $script:Git remote get-url origin 2>$null | Out-String).Trim())
+        }
+    } catch {
+        $origin = ''
+    } finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+    }
+
     if (-not $repoExists) {
         if ($origin) { & $script:Git remote remove origin }
         & $script:Gh repo create $repoFull --public --source $Root --remote origin --push
