@@ -1,0 +1,48 @@
+name: Preload uncached timetables
+
+on:
+  schedule:
+    - cron: "4,14,24,34,44,54 * * * *"
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/prewarm.yml"
+      - "cloud/collector/**"
+      - "cloud/worker/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tus-companion-prewarm
+  cancel-in-progress: false
+
+jobs:
+  prewarm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CLOUD_API_URL: ${{ secrets.CLOUD_API_URL }}
+      CLOUD_ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
+      SESSION_CIPHER_KEY_B64: ${{ secrets.SESSION_CIPHER_KEY_B64 }}
+      VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+      VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+      TUS_PUSH_WORKERS: "8"
+      TUS_PRELOAD_MISSING: "1"
+      TUS_PRELOAD_LIMIT: "40"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: cloud/collector/requirements.txt
+      - name: Install collector dependencies
+        run: pip install -r cloud/collector/requirements.txt
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Preload the next uncached timetable batch
+        run: python cloud/collector/run_cloud_sync.py

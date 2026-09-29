@@ -62,8 +62,11 @@ class CloudApi:
             raise RuntimeError(f"cloud-api {method} {path}: {r.status_code} {r.text[:400]}")
         return r.json() if r.content else None
 
-    def sync_plan(self):
-        return self._request("GET", "/api/admin/sync-plan")
+    def sync_plan(self, preload_missing: bool = False, limit: int = 25):
+        path = "/api/admin/sync-plan"
+        if preload_missing:
+            path += f"?preload=missing&limit={max(1, min(50, int(limit)))}"
+        return self._request("GET", path)
 
     def upload_catalog(self, payload: dict):
         return self._request("POST", "/api/admin/catalog", json=payload)
@@ -252,6 +255,8 @@ def main() -> int:
     vapid_private = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
     vapid_subject = os.environ.get("VAPID_SUBJECT", "mailto:admin@example.com").strip()
     push_workers = int(os.environ.get("TUS_PUSH_WORKERS", "16"))
+    preload_missing = os.environ.get("TUS_PRELOAD_MISSING", "").strip().lower() in {"1", "true", "yes"}
+    preload_limit = int(os.environ.get("TUS_PRELOAD_LIMIT", "25"))
 
     if not base_url or not admin_token or not cipher_key_raw:
         raise RuntimeError("CLOUD_API_URL, CLOUD_ADMIN_TOKEN and SESSION_CIPHER_KEY_B64 are required")
@@ -270,7 +275,7 @@ def main() -> int:
         session_source = restore_source_session(api, cipher_key, bootstrap)
         print(f"[session] restored from {session_source}")
 
-        plan = api.sync_plan()
+        plan = api.sync_plan(preload_missing=preload_missing, limit=preload_limit)
         if plan.get("catalog_refresh_due"):
             print("[catalog] refresh due")
             catalog_payload = scrape_catalog(headless=True)
@@ -279,12 +284,13 @@ def main() -> int:
             # scrape_catalog updates storage_state; persist immediately so any
             # upstream cookie rotation survives even if later group sync fails.
             persist_source_session(api, cipher_key)
-            plan = api.sync_plan()
+            plan = api.sync_plan(preload_missing=preload_missing, limit=preload_limit)
 
         groups = plan.get("groups") or []
         group_count = len(groups)
         if groups:
-            print(f"[sync] fetching {group_count} active group(s)")
+            mode = "uncached" if preload_missing else "active"
+            print(f"[sync] fetching {group_count} {mode} group(s)")
             fetched = fetch_many(groups, headless=True)
             for item in groups:
                 group_id = item["group_id"]

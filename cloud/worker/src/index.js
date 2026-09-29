@@ -248,30 +248,48 @@ async function pushTest(request, env) {
   }
 }
 
-async function adminSyncPlan(env) {
-  const cutoff = new Date(Date.now() - INTEREST_TTL_DAYS * 86400_000).toISOString();
-  const res = await env.DB.prepare(
-    `WITH active AS (
-       SELECT group_id, department_id FROM interests WHERE last_seen_at >= ?
-       UNION
-       SELECT DISTINCT p.group_id, g.department_id
-       FROM push_subscriptions p JOIN groups g ON g.id=p.group_id
-       WHERE p.active=1
-     )
-     SELECT a.group_id,a.department_id,g.label,s.payload,s.payload_hash,st.last_success_at,st.status
-     FROM active a
-     LEFT JOIN groups g ON g.id=a.group_id
-     LEFT JOIN latest_snapshots s ON s.group_id=a.group_id
-     LEFT JOIN sync_state st ON st.group_id=a.group_id
-     ORDER BY g.label`,
-  ).bind(cutoff).all();
+async function adminSyncPlan(env, url = null) {
+  const preload = url?.searchParams.get("preload") === "missing";
+  const requestedLimit = Number(url?.searchParams.get("limit") || 25);
+  const preloadLimit = Math.max(1, Math.min(50, Number.isFinite(requestedLimit) ? requestedLimit : 25));
+  let res;
+
+  if (preload) {
+    res = await env.DB.prepare(
+      `SELECT g.id AS group_id,g.department_id,g.label,s.payload,s.payload_hash,st.last_success_at,st.status
+       FROM groups g
+       LEFT JOIN latest_snapshots s ON s.group_id=g.id
+       LEFT JOIN sync_state st ON st.group_id=g.id
+       WHERE s.group_id IS NULL
+       ORDER BY g.label
+       LIMIT ?`,
+    ).bind(preloadLimit).all();
+  } else {
+    const cutoff = new Date(Date.now() - INTEREST_TTL_DAYS * 86400_000).toISOString();
+    res = await env.DB.prepare(
+      `WITH active AS (
+         SELECT group_id, department_id FROM interests WHERE last_seen_at >= ?
+         UNION
+         SELECT DISTINCT p.group_id, g.department_id
+         FROM push_subscriptions p JOIN groups g ON g.id=p.group_id
+         WHERE p.active=1
+       )
+       SELECT a.group_id,a.department_id,g.label,s.payload,s.payload_hash,st.last_success_at,st.status
+       FROM active a
+       LEFT JOIN groups g ON g.id=a.group_id
+       LEFT JOIN latest_snapshots s ON s.group_id=a.group_id
+       LEFT JOIN sync_state st ON st.group_id=a.group_id
+       ORDER BY g.label`,
+    ).bind(cutoff).all();
+  }
 
   const catalogAt = await getMetaValue(env, "catalog_updated_at");
   const catalogMs = catalogAt ? Date.parse(catalogAt) : 0;
   const refreshDue = !catalogAt || !Number.isFinite(catalogMs) || Date.now() - catalogMs >= CATALOG_REFRESH_HOURS * 3600_000;
 
   return json({
-    catalog_refresh_due: refreshDue,
+    mode: preload ? "preload-missing" : "active",
+    catalog_refresh_due: preload ? false : refreshDue,
     groups: (res.results || []).map((r) => ({
       group_id: r.group_id,
       department_id: r.department_id,
@@ -458,7 +476,7 @@ async function route(request, env) {
 
   if (path.startsWith("/api/admin/")) {
     if (!adminAuthorized(request, env)) return apiError(403, "admin-disabled-or-invalid-token");
-    if (path === "/api/admin/sync-plan" && request.method === "GET") return adminSyncPlan(env);
+    if (path === "/api/admin/sync-plan" && request.method === "GET") return adminSyncPlan(env, url);
     if (path === "/api/admin/catalog" && request.method === "POST") return adminCatalog(request, env);
     if (path === "/api/admin/result" && request.method === "POST") return adminResult(request, env);
     if (path === "/api/admin/source-session" && (request.method === "GET" || request.method === "PUT")) return adminSourceSession(request, env);
