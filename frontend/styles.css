@@ -99,3 +99,16 @@
 .subject-card{border-left-width:5px}
 .week-event{border:1px solid var(--subject-border);border-left:5px solid var(--subject-accent)}
 .week-event.current{border-color:var(--subject-accent);border-left-width:6px}
+
+/* v14.1: prevent first-sync card overflow on narrow phones */
+.sync-panel > div:last-child{min-width:0}
+.sync-panel h2,.sync-panel p{overflow-wrap:anywhere}
+@media(max-width:520px){
+  .pending-page header{margin-bottom:22px}
+  .pending-page h1{font-size:clamp(38px,11vw,54px);line-height:.98}
+  .sync-panel{grid-template-columns:46px minmax(0,1fr);gap:14px;padding:18px;border-radius:20px}
+  .sync-icon{width:46px;height:46px}
+  .sync-panel h2{font-size:20px}
+  .sync-panel p{font-size:13px;line-height:1.48}
+  .sync-eyebrow{max-width:100%}
+}
