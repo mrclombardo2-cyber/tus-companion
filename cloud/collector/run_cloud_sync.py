@@ -72,8 +72,11 @@ class CloudApi:
 
         limit = max(1, min(50, int(limit)))
         catalog = self.client.get(self.base_url + "/api/catalog").json()
+        department_match = os.environ.get("TUS_PRELOAD_DEPARTMENT_MATCH", "").strip().casefold()
         missing = []
         for dep in catalog.get("departments") or []:
+            if department_match and department_match not in str(dep.get("label") or "").casefold():
+                continue
             department_id = dep.get("id")
             for group in dep.get("groups") or []:
                 group_id = group.get("id")

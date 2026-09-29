@@ -1,4 +1,4 @@
-name: Preload all current timetables
+name: Preload Business first, then all timetables
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ concurrency:
 jobs:
   preload-all:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       CLOUD_API_URL: ${{ secrets.CLOUD_API_URL }}
       CLOUD_ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
@@ -26,7 +26,6 @@ jobs:
       VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
       TUS_PUSH_WORKERS: "8"
       TUS_PRELOAD_MISSING: "1"
-      TUS_PRELOAD_LIMIT: "40"
       PYTHONUNBUFFERED: "1"
 
     steps:
@@ -40,24 +39,48 @@ jobs:
         run: pip install -r cloud/collector/requirements.txt
       - name: Install Chromium
         run: python -m playwright install --with-deps chromium
-      - name: Preload every uncached timetable
+
+      - name: Phase 1 - preload Business timetables first
         shell: bash
         run: |
           set -uo pipefail
-          for batch in $(seq 1 30); do
-            echo "=== preload batch $batch ==="
+          for batch in $(seq 1 20); do
+            echo "=== BUSINESS preload batch $batch ==="
             set +e
-            output="$(python cloud/collector/run_cloud_sync.py 2>&1)"
+            output="$(TUS_PRELOAD_DEPARTMENT_MATCH=business TUS_PRELOAD_LIMIT=25 python cloud/collector/run_cloud_sync.py 2>&1)"
             code=$?
             set -e
-            printf '%s\\n' "$output"
-            if [ "$code" -ne 0 ]; then
-              echo "Collector failed with exit code $code"
-              exit "$code"
+            printf '%s\n' "$output"
+            if [ "$code" -eq 1 ]; then
+              echo "Fatal collector error during Business preload."
+              exit 1
             fi
-            if printf '%s\\n' "$output" | grep -q "\[sync\] no active groups yet"; then
-              echo "All currently catalogued timetables are cached."
+            if printf '%s\n' "$output" | grep -q "\[sync\] no active groups yet"; then
+              echo "Business timetables are preloaded."
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Phase 2 - preload every remaining timetable
+        shell: bash
+        run: |
+          set -uo pipefail
+          for batch in $(seq 1 40); do
+            echo "=== ALL preload batch $batch ==="
+            set +e
+            output="$(TUS_PRELOAD_LIMIT=40 python cloud/collector/run_cloud_sync.py 2>&1)"
+            code=$?
+            set -e
+            printf '%s\n' "$output"
+            if [ "$code" -eq 1 ]; then
+              echo "Fatal collector error during full preload."
+              exit 1
+            fi
+            if printf '%s\n' "$output" | grep -q "\[sync\] no active groups yet"; then
+              echo "All currently catalogued timetables are preloaded."
               exit 0
             fi
+            sleep 2
           done
-          echo "Stopped after 30 batches; scheduled prewarm will continue remaining groups."
+          echo "Batch cap reached; scheduled preload will continue any remaining groups."
