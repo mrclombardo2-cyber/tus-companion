@@ -1,0 +1,65 @@
+name: Preload all current timetables
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/preload-all.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tus-companion-cloud-sync
+  cancel-in-progress: false
+
+jobs:
+  preload-all:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CLOUD_API_URL: ${{ secrets.CLOUD_API_URL }}
+      CLOUD_ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
+      SESSION_CIPHER_KEY_B64: ${{ secrets.SESSION_CIPHER_KEY_B64 }}
+      VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+      VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+      TUS_PUSH_WORKERS: "8"
+      TUS_PRELOAD_MISSING: "1"
+      TUS_PRELOAD_LIMIT: "40"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: cloud/collector/requirements.txt
+      - name: Install collector dependencies
+        run: pip install -r cloud/collector/requirements.txt
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Preload every uncached timetable
+        shell: bash
+        run: |
+          set -uo pipefail
+          for batch in $(seq 1 30); do
+            echo "=== preload batch $batch ==="
+            set +e
+            output="$(python cloud/collector/run_cloud_sync.py 2>&1)"
+            code=$?
+            set -e
+            printf '%s
+' "$output"
+            if [ "$code" -ne 0 ]; then
+              echo "Collector failed with exit code $code"
+              exit "$code"
+            fi
+            if printf '%s
+' "$output" | grep -q "\[sync\] no active groups yet"; then
+              echo "All currently catalogued timetables are cached."
+              exit 0
+            fi
+          done
+          echo "Stopped after 30 batches; scheduled prewarm will continue remaining groups."
