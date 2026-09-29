@@ -63,10 +63,39 @@ class CloudApi:
         return r.json() if r.content else None
 
     def sync_plan(self, preload_missing: bool = False, limit: int = 25):
-        path = "/api/admin/sync-plan"
-        if preload_missing:
-            path += f"?preload=missing&limit={max(1, min(50, int(limit)))}"
-        return self._request("GET", path)
+        if not preload_missing:
+            return self._request("GET", "/api/admin/sync-plan")
+
+        from urllib.parse import quote
+
+        limit = max(1, min(50, int(limit)))
+        catalog = self.client.get(self.base_url + "/api/catalog").json()
+        missing = []
+        for dep in catalog.get("departments") or []:
+            department_id = dep.get("id")
+            for group in dep.get("groups") or []:
+                group_id = group.get("id")
+                if not department_id or not group_id:
+                    continue
+                r = self.client.get(
+                    self.base_url + "/api/timetable/" + quote(str(group_id), safe=""),
+                    headers={"user-agent": "tus-companion-prewarm/1.0"},
+                )
+                if r.status_code == 404:
+                    missing.append({
+                        "group_id": str(group_id),
+                        "department_id": str(department_id),
+                        "label": str(group.get("label") or group_id),
+                        "snapshot": None,
+                        "payload_hash": None,
+                        "last_success_at": None,
+                        "status": "preload",
+                    })
+                    if len(missing) >= limit:
+                        return {"catalog_refresh_due": False, "groups": missing}
+                elif r.status_code >= 400:
+                    print(f"[preload] skip {group_id}: cloud returned {r.status_code}")
+        return {"catalog_refresh_due": False, "groups": missing}
 
     def upload_catalog(self, payload: dict):
         return self._request("POST", "/api/admin/catalog", json=payload)
