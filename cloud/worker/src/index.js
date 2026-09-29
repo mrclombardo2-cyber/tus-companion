@@ -269,12 +269,18 @@ async function adminSyncPlan(env, url = null) {
   } else if (hot) {
     const hotCutoff = new Date(Date.now() - 3 * 60_000).toISOString();
     res = await env.DB.prepare(
-      `SELECT i.group_id,i.department_id,g.label,s.payload,s.payload_hash,st.last_success_at,st.status
-       FROM interests i
-       LEFT JOIN groups g ON g.id=i.group_id
-       LEFT JOIN latest_snapshots s ON s.group_id=i.group_id
-       LEFT JOIN sync_state st ON st.group_id=i.group_id
-       WHERE i.last_seen_at >= ?
+      `WITH hot_groups AS (
+         SELECT group_id, department_id FROM interests WHERE last_seen_at >= ?
+         UNION
+         SELECT DISTINCT p.group_id, g.department_id
+         FROM push_subscriptions p JOIN groups g ON g.id=p.group_id
+         WHERE p.active=1
+       )
+       SELECT h.group_id,h.department_id,g.label,s.payload,s.payload_hash,st.last_success_at,st.status
+       FROM hot_groups h
+       LEFT JOIN groups g ON g.id=h.group_id
+       LEFT JOIN latest_snapshots s ON s.group_id=h.group_id
+       LEFT JOIN sync_state st ON st.group_id=h.group_id
        ORDER BY g.label`,
     ).bind(hotCutoff).all();
   } else {
