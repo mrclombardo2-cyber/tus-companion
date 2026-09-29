@@ -8,7 +8,8 @@ const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunda
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-29';
 const CLOUD_REFRESH_MS=5*60*1000;
-const PENDING_REFRESH_MS=30*1000;
+const PENDING_REFRESH_MS=2500;
+const PENDING_KEY='tus-companion-pending-v1';
 
 const SUBJECT_PALETTE=[
   {bg:'#EAF3FB',border:'#B9D4E8',accent:'#5E91B7',ink:'#18384F',room:'#416F91'},
@@ -47,6 +48,25 @@ window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredIns
 window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;state.installModal=false;localStorage.setItem(INSTALL_DISMISSED,String(Date.now()));toast('App installed.');});
 
 function readSelection(){try{return JSON.parse(localStorage.getItem(STORE)||'null')}catch{return null}}
+function pendingRecord(){try{return JSON.parse(localStorage.getItem(PENDING_KEY)||'null')}catch{return null}}
+function ensurePendingSince(reset=false){
+  if(!state.selection)return Date.now();
+  const saved=pendingRecord();
+  if(!reset&&saved?.group===state.selection.group&&Number.isFinite(Number(saved.since)))return Number(saved.since);
+  const since=Date.now();
+  localStorage.setItem(PENDING_KEY,JSON.stringify({group:state.selection.group,since}));
+  return since;
+}
+function clearPendingSince(){localStorage.removeItem(PENDING_KEY)}
+function pendingSeconds(){return Math.max(0,Math.floor((Date.now()-ensurePendingSince(false))/1000))}
+function pendingClock(sec=pendingSeconds()){const m=Math.floor(sec/60),s=sec%60;return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`}
+function updatePendingUi(){
+  const timer=document.getElementById('syncTimer');if(!timer||state.snapshot)return;
+  const sec=pendingSeconds(),bar=document.getElementById('syncProgress'),hint=document.getElementById('syncHint');
+  timer.textContent=pendingClock(sec);
+  if(bar)bar.style.width=`${Math.min(100,(sec/60)*100)}%`;
+  if(hint)hint.textContent=sec<60?'Target: ready in about a minute. This page updates automatically.':'Taking a little longer. Sync is still running automatically.';
+}
 function defaultPrefs(){return {timeFormat:'24',accessibleRoutes:false,savedOrigin:null}}
 function readPrefs(){try{return {...defaultPrefs(),...JSON.parse(localStorage.getItem(PREFS)||'{}')}}catch{return defaultPrefs()}}
 function savePrefs(){localStorage.setItem(PREFS,JSON.stringify(state.prefs))}
@@ -103,7 +123,7 @@ function setup(){
     const d=state.catalog.find(x=>x.id===dep.value);const g=d?.groups?.find(x=>x.id===grp.value);
     state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};
     localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);
-    state.snapshot=null;state.changes=[];state.error='';state.sync={status:'queued'};
+    state.snapshot=null;state.changes=[];state.error='';state.sync={status:'queued'};ensurePendingSince(true);
     await updateExistingSubscription();render();await watchAndLoad(true);render();
   };
   bindCommon();
@@ -111,17 +131,17 @@ function setup(){
 
 function syncCopy(){
   const status=state.sync?.status||'never-synced';
-  if(status==='queued')return {title:'Preparing your timetable',body:'Your course is queued. The cloud collector runs about every five minutes, so the first timetable can take a few minutes.',kind:'working'};
+  if(status==='queued')return {title:'Preparing your timetable',body:'We are fetching your course now. It normally appears in under a minute.',kind:'working'};
   if(status==='syncing')return {title:'Reading the latest timetable',body:'The cloud collector is fetching the latest timetable now. This screen updates automatically.',kind:'working'};
   if(status==='error')return {title:'Timetable temporarily unavailable',body:'We could not refresh the source just now. Your course choice is safe and the service will retry automatically.',kind:'error'};
   return {title:'Starting your first sync',body:'We have your course. The next cloud sync will prepare its first timetable snapshot.',kind:'working'};
 }
 
 function renderPending(){
-  const m=syncCopy(),group=state.selection?.groupLabel||state.selection?.group||'';
-  const attempt=state.sync?.last_attempt_at?`Last attempt ${formatClockDate(state.sync.last_attempt_at)}`:'Connecting…';
-  APP.innerHTML=`<main class="app pending-page"><header><div><p class="kicker">TUS ATHLONE</p><h1>Syncing your timetable</h1></div></header><section class="sync-panel ${m.kind}"><div class="sync-icon"><span></span></div><div><p class="sync-eyebrow">${esc(group)}</p><h2>${esc(m.title)}</h2><p>${esc(m.body)}</p><div class="sync-meta">${esc(attempt)}</div></div></section>${state.error?`<div class="friendly-error">${esc(state.error)}</div>`:''}<button id="change" class="ghost">Change course</button></main>${renderOverlays()}`;
-  bindCommon();
+  const m=syncCopy(),group=state.selection?.groupLabel||state.selection?.group||'',sec=pendingSeconds();
+  const attempt=state.sync?.last_attempt_at?`Last check ${formatClockDate(state.sync.last_attempt_at)}`:'Starting cloud sync…';
+  APP.innerHTML=`<main class="app pending-page"><header><div><p class="kicker">TUS ATHLONE</p><h1>Loading your timetable</h1></div></header><section class="sync-panel ${m.kind}"><div class="sync-icon"><span></span></div><div class="sync-copy"><p class="sync-eyebrow">${esc(group)}</p><h2>${esc(m.title)}</h2><div class="sync-timer-row"><strong id="syncTimer" class="sync-timer">${pendingClock(sec)}</strong><span>elapsed</span></div><div class="sync-progress-track" aria-hidden="true"><span id="syncProgress" style="width:${Math.min(100,(sec/60)*100)}%"></span></div><p id="syncHint" class="sync-hint">${sec<60?'Target: ready in about a minute. This page updates automatically.':'Taking a little longer. Sync is still running automatically.'}</p><div class="sync-meta">${esc(attempt)}</div></div></section>${state.error?`<div class="friendly-error">${esc(state.error)}</div>`:''}<button id="change" class="ghost">Change course</button></main>${renderOverlays()}`;
+  bindCommon();updatePendingUi();
 }
 
 function render(){
@@ -136,8 +156,9 @@ function render(){
 }
 
 function renderToday(){
-  const today=visibleEvents().filter(e=>e.date===isoToday()||e.day===dayName()),next=nextEvent(),prev=next?previousFor(next)?.room_code:null;
-  return `${next?`<section class="hero ${isCurrentEvent(next)?'hero-live':''}"><p class="kicker gold">${isCurrentEvent(next)?`HAPPENING NOW${eventWeekday(next)?` (${eventWeekday(next)})`:''}`:`NEXT CLASS${eventWeekday(next)?` (${eventWeekday(next)})`:''}`}</p><h2>${esc(next.module)}</h2><div class="hero-meta"><span>${esc(formatRange(next))}</span><span>${esc(next.room_code||next.room_raw)}</span></div><p>${esc(next.room_name||next.staff)}</p>${next.room_code?`<button class="hero-button" data-route-room="${esc(next.room_code)}" data-route-previous="${esc(prev||'')}">Get directions</button>`:''}</section>`:''}<section><div class="section-head"><h2>${dayName()}</h2><span>${today.length} classes</span></div>${today.length?today.map((e,i)=>card(e,i?today[i-1].room_code:null)).join(''):'<div class="empty">No classes today.</div>'}</section>`;
+  const today=visibleEvents().filter(e=>e.date?e.date===isoToday():e.day===dayName()).sort((a,b)=>a.start.localeCompare(b.start));
+  const now=new Date(),focus=today.find(isCurrentEvent)||today.find(e=>{const end=eventTime(e,'end');return end&&end>=now})||null,prev=focus?previousFor(focus)?.room_code:null;
+  return `${focus?`<section class="hero ${isCurrentEvent(focus)?'hero-live':''}"><p class="kicker gold">TODAY</p><h2>${esc(focus.module)}</h2><div class="hero-meta"><span>${esc(formatRange(focus))}</span><span>${esc(focus.room_code||focus.room_raw)}</span>${isCurrentEvent(focus)?'<span>NOW</span>':''}</div><p>${esc(focus.room_name||focus.staff)}</p>${focus.room_code?`<button class="hero-button" data-route-room="${esc(focus.room_code)}" data-route-previous="${esc(prev||'')}">Get directions</button>`:''}</section>`:''}<section><div class="section-head"><h2>${dayName()}</h2><span>${today.length} classes</span></div>${today.length?today.map((e,i)=>card(e,i?today[i-1].room_code:null)).join(''):'<div class="empty">No classes today.</div>'}</section>`;
 }
 function timeMinutes(value){const [h,m='0']=String(value||'0:0').split(':').map(Number);return (Number.isFinite(h)?h:0)*60+(Number.isFinite(m)?m:0)}
 function weekBounds(events){
@@ -166,7 +187,7 @@ function mobileWeekDay(events){
 }
 function renderMobileWeek(events){
   const selected=mobileWeekDay(events),weekdays=DAYS.slice(0,5);
-  const picker=weekdays.map(day=>{const count=events.filter(e=>e.day===day).length,date=shortDateForDay(day,events),today=day===dayName();return `<button class="mobile-day ${selected===day?'selected':''} ${today?'today':''}" data-week-day="${esc(day)}" aria-pressed="${selected===day?'true':'false'}"><b>${esc(day.slice(0,3))}</b><span>${esc(date||'—')}</span>${count?`<em>${count}</em>`:''}</button>`}).join('');
+  const picker=weekdays.map(day=>{const date=shortDateForDay(day,events),today=day===dayName();return `<button class="mobile-day ${selected===day?'selected':''} ${today?'today':''}" data-week-day="${esc(day)}" aria-pressed="${selected===day?'true':'false'}"><b>${esc(day.slice(0,3))}</b><span>${esc(date||'—')}</span></button>`}).join('');
   const list=events.filter(e=>e.day===selected).sort((a,b)=>a.start.localeCompare(b.start));
   const classes=list.length?list.map(e=>{const live=isCurrentEvent(e),prev=previousFor(e)?.room_code||'',room=e.room_code||e.room_raw||'Room TBC';const inner=`<span class="mobile-week-time"><b>${esc(formatTime(e.start))}</b><span>${esc(formatTime(e.end))}</span></span><span class="mobile-week-info"><strong>${esc(e.module)}</strong><span class="mobile-week-meta"><b>${esc(room)}</b>${e.type?`<span>${esc(e.type)}</span>`:''}</span>${e.staff?`<small>${esc(e.staff)}</small>`:''}</span><span class="mobile-week-side">${live?'<em>NOW</em>':''}${e.room_code?'<span aria-hidden="true">›</span>':''}</span>`;return e.room_code?`<button class="mobile-week-card ${live?'current':''}" style="${subjectStyle(e.module)}" data-route-room="${esc(e.room_code)}" data-route-previous="${esc(prev)}" aria-label="${esc(e.module)}, ${esc(formatRange(e))}, ${esc(room)}. Open directions.">${inner}</button>`:`<div class="mobile-week-card no-route ${live?'current':''}" style="${subjectStyle(e.module)}">${inner}</div>`}).join(''):`<div class="mobile-week-empty">No classes on ${esc(selected)}.</div>`;
   const date=shortDateForDay(selected,events),count=list.length;
@@ -307,7 +328,7 @@ async function watchAndLoad(forceWatch=false){
     }
     if(w?.sync)state.sync=w.sync;
     try{
-      const t=await api('/api/timetable/'+encodeURIComponent(state.selection.group));state.snapshot=t.snapshot;state.sync=t.sync||state.sync;
+      const t=await api('/api/timetable/'+encodeURIComponent(state.selection.group));state.snapshot=t.snapshot;state.sync=t.sync||state.sync;if(state.snapshot)clearPendingSince();
       try{state.changes=await api('/api/changes/'+encodeURIComponent(state.selection.group))}catch{}
       state.error='';
     }catch(e){
@@ -323,10 +344,11 @@ async function init(){
   try{const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta').catch(()=>null)]);state.catalog=c.departments||[];state.meta=m;if(!state.catalog.length)state.error='Course catalogue is still being prepared. Try again in a few minutes.'}catch{state.error='Could not load the course catalogue from the service.'}
   if('serviceWorker'in navigator)await navigator.serviceWorker.register('/sw.js').catch(()=>{});
   await refreshPushStatus();
-  if(state.selection)await watchAndLoad(true);
+  if(state.selection){ensurePendingSince(false);await watchAndLoad(true);}
   if(state.selection&&state.snapshot&&shouldAutoOfferInstall())setTimeout(()=>{state.installModal=true;render()},1200);
   render();setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS);
 }
+setInterval(()=>{if(state.selection&&!state.snapshot)updatePendingUi()},1000);
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'&&state.selection&&Date.now()-lastLoadAt>30*1000){
     watchAndLoad(false).then(refreshPushStatus).then(render).catch(()=>{});

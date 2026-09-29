@@ -112,3 +112,37 @@
   .sync-panel p{font-size:13px;line-height:1.48}
   .sync-eyebrow{max-width:100%}
 }
+
+/* v14.2 mobile-first first-sync UX */
+html,body{max-width:100%;overflow-x:hidden}
+.app,.setup{max-width:100%;overflow-x:hidden}
+.sync-copy{min-width:0}
+.sync-timer-row{display:flex;align-items:baseline;gap:8px;margin:14px 0 8px}
+.sync-timer{font-size:30px;line-height:1;font-variant-numeric:tabular-nums;letter-spacing:-.04em;color:#171715}
+.sync-timer-row span{font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#99948b}
+.sync-progress-track{height:7px;background:#e3ded2;border-radius:999px;overflow:hidden;margin:0 0 11px}
+.sync-progress-track>span{display:block;height:100%;background:#b49a4f;border-radius:inherit;transition:width .35s ease}
+.sync-hint{font-size:12px!important;line-height:1.45!important;color:#706b62!important}
+@media(max-width:520px){
+  .app,.setup{width:100%;padding-left:max(14px,env(safe-area-inset-left));padding-right:max(14px,env(safe-area-inset-right))}
+  .pending-page header{margin-bottom:20px}
+  .pending-page header h1{font-size:clamp(36px,11vw,50px);overflow-wrap:anywhere}
+  .sync-panel{grid-template-columns:46px minmax(0,1fr);gap:13px;padding:17px;border-radius:20px}
+  .sync-panel>div:last-child{min-width:0}
+  .sync-panel h2{font-size:20px;overflow-wrap:anywhere}
+  .sync-panel p{font-size:13px;overflow-wrap:anywhere}
+  .sync-eyebrow{max-width:100%;font-size:9px!important}
+  .sync-timer{font-size:28px}
+  .ghost,.cta{min-height:48px;width:100%}
+  .mobile-day{min-height:56px}
+  .mobile-day b{font-size:13px}
+}
+@media(max-width:340px){
+  .app,.setup{padding-left:10px;padding-right:10px}
+  .sync-panel{grid-template-columns:40px minmax(0,1fr);gap:10px;padding:14px}
+  .sync-icon{width:40px;height:40px;border-radius:13px}
+  .pending-page header h1{font-size:34px}
+  .mobile-week-card{grid-template-columns:62px minmax(0,1fr) 20px;padding-left:10px;padding-right:9px}
+  .mobile-week-info>strong{font-size:14px}
+}
+
