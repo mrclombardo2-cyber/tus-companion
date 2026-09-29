@@ -7,6 +7,7 @@ const INSTALL_DISMISSED='tus-companion-install-dismissed-v1';
 const INSTALL_DONE='tus-companion-install-done-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
+const MAPPEDIN_ORIGIN='https://app.mappedin.com';
 const LEGAL_VERSION='2026-09-29';
 const CLOUD_REFRESH_MS=30*1000;
 const PENDING_REFRESH_MS=2500;
@@ -39,7 +40,7 @@ const CAMPUS_STARTS=[
 let deferredInstallPrompt=null;
 let lastWatchAt=0;
 let lastLoadAt=0;
-let state={catalog:[],selection:readSelection(),snapshot:null,changes:[],sync:null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,legal:null,route:null,originEditor:false,toast:''};
+let state={catalog:[],selection:readSelection(),snapshot:null,changes:[],sync:null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,legal:null,route:null,originEditor:false,mapPicker:false,mapPick:null,toast:''};
 
 class ApiError extends Error{
   constructor(status,detail,raw=''){super(detail||raw||`Request failed (${status})`);this.status=status;this.detail=detail;this.raw=raw}
@@ -216,7 +217,7 @@ function renderSettings(){
   return `<section class="settings"><div class="setting-card"><div><h3>Notifications</h3><p>${esc(pushStatusText())}. Receive room, time and class-change alerts.</p></div><div class="setting-actions"><button id="notify" class="small-primary">Enable / update</button>${state.push.subscribed?'<button id="test-push" class="small-ghost">Send test</button><button id="disable-push" class="small-ghost danger">Turn off</button>':''}</div></div>${deviceInfo().standalone?'':`<div class="setting-card"><div><h3>Install app</h3><p>${esc(installSummary())}</p></div><button id="install-app" class="small-ghost">How to install</button></div>`}<div class="setting-card"><div><h3>Time format</h3><p>Choose how class times are displayed.</p></div><div class="segmented"><button data-time="24" class="${state.prefs.timeFormat==='24'?'selected':''}">24-hour</button><button data-time="12" class="${state.prefs.timeFormat==='12'?'selected':''}">AM/PM</button></div></div><div class="setting-card directions-setting"><div><h3>Usual starting point</h3><p>${savedSummary}. Directions always ask where you want to start, so you are never forced to use the previous classroom.</p></div><button id="set-origin" class="small-ghost">${saved?'Change':'Set point'}</button></div><div class="setting-card"><div><h3>Accessible routes</h3><p>Ask Mappedin to avoid stairs where an accessible path is available.</p></div><label class="switch"><input id="accessible" type="checkbox" ${state.prefs.accessibleRoutes?'checked':''}><span></span></label></div><button id="change" class="ghost">Change course</button><p>Selected group: <b>${esc(state.selection.groupLabel||state.selection.group)}</b></p><div class="module-box"><h3>My modules</h3><p>Hide alternatives you do not attend. Hidden modules are also excluded from future push alerts on this device.</p>${mods.map(m=>`<label class="module-row"><input type="checkbox" data-module="${esc(m)}" ${hidden.has(m)?'':'checked'}><span>${esc(m)}</span></label>`).join('')}</div><div class="legal-footer"><p><strong>Unofficial independent app.</strong> Not affiliated with, endorsed by, or authorized by Technological University of the Shannon (TUS). For student convenience only. Always verify critical timetable information using official TUS systems.</p><div><button data-legal="terms">Terms of Use</button><span>·</span><button data-legal="privacy">Privacy Notice</button></div><small>Saved route starting points stay on this device and are sent only to Mappedin when you open directions. TUS Companion does not store them on its server.</small></div></section>`;
 }
 
-function renderOverlays(){return `${state.installModal?renderInstallModal():''}${state.legal?renderLegalModal(state.legal):''}${state.route?renderRouteModal():''}${state.originEditor?renderOriginEditor():''}`}
+function renderOverlays(){return `${state.installModal?renderInstallModal():''}${state.legal?renderLegalModal(state.legal):''}${state.route?renderRouteModal():''}${state.originEditor?renderOriginEditor():''}${state.mapPicker?renderMapOriginPicker():''}`}
 function renderInstallModal(){const d=deviceInfo();let title='Install TUS Companion',body='',action='';if(d.standalone){body='The app is already installed on this device.'}else if(deferredInstallPrompt){body='Install it for a full-screen app experience and quicker access to timetable alerts.';action='<button id="install-native" class="cta">Install app</button>'}else if(d.ios){body='On iPhone/iPad: open this page in Safari, tap the Share button, choose “Add to Home Screen”, then tap Add.'}else if(d.android){body='On Android: open the browser menu (⋮), choose “Install app” or “Add to Home screen”, then confirm.'}else{body='On Chrome or Edge desktop: use the Install icon in the address bar, or open the browser menu and choose “Install TUS Companion”.'}return `<div class="modal-backdrop" role="presentation"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="install-title"><button class="modal-x" data-close-modal aria-label="Close">×</button><p class="kicker">APP INSTALL</p><h2 id="install-title">${title}</h2><p>${body}</p>${action}<button id="install-later" class="ghost">Not now</button></section></div>`}
 function legalContact(){const email=state.meta?.contact_email||'';return email?`Contact: <a href="mailto:${esc(email)}">${esc(email)}</a>.`:'Operator contact details must be configured before a public launch.'}
 function renderLegalModal(kind){
@@ -244,6 +245,9 @@ function bindCommon(){
   APP.querySelectorAll('[data-preset-origin]').forEach(b=>b.onclick=()=>choosePresetOrigin(b.dataset.presetOrigin));
   const saveOrigin=document.getElementById('save-origin');if(saveOrigin)saveOrigin.onclick=saveOriginFromEditor;
   const saveOriginCustom=document.getElementById('save-origin-custom');if(saveOriginCustom)saveOriginCustom.onclick=saveOriginFromEditor;
+  const openMapOrigin=document.getElementById('open-map-origin');if(openMapOrigin)openMapOrigin.onclick=openMapOriginPicker;
+  APP.querySelectorAll('[data-close-map-origin]').forEach(b=>b.onclick=closeMapOriginPicker);
+  const saveMapOriginButton=document.getElementById('save-map-origin');if(saveMapOriginButton)saveMapOriginButton.onclick=saveMapOrigin;
   const clearOrigin=document.getElementById('clear-origin');if(clearOrigin)clearOrigin.onclick=clearSavedOrigin;
   const notify=document.getElementById('notify');if(notify)notify.onclick=enableNotifications;
   const test=document.getElementById('test-push');if(test)test.onclick=testNotification;
@@ -293,6 +297,35 @@ function saveOriginFromEditor(){
   if(value)return setSavedOrigin(custom||value,value);
   toast('Choose a starting point.');
 }
+function openMapOriginPicker(){
+  state.mapPick=null;
+  state.mapPicker=true;
+  render();
+}
+function closeMapOriginPicker(){
+  state.mapPicker=false;
+  state.mapPick=null;
+  render();
+}
+function updateMapOriginCandidate(){
+  const label=document.getElementById('map-origin-choice');
+  const save=document.getElementById('save-map-origin');
+  if(!label||!save)return;
+  if(state.mapPick?.value){
+    label.textContent='Point selected on the campus map';
+    save.disabled=false;
+  }else{
+    label.textContent='Tap your usual entrance or starting place on the map.';
+    save.disabled=true;
+  }
+}
+function saveMapOrigin(){
+  if(!state.mapPick?.value){toast('Choose a point on the map first.');return}
+  const picked=state.mapPick;
+  state.mapPicker=false;
+  state.mapPick=null;
+  setSavedOrigin('Campus map point',picked.value);
+}
 function clearSavedOrigin(){state.prefs.savedOrigin=null;savePrefs();state.originEditor=false;render();toast('Usual start cleared.');}
 function choosePresetOrigin(value){
   const preset=CAMPUS_STARTS.find(x=>x.value===value);if(!preset)return;setSavedOrigin(preset.label,preset.value);
@@ -303,7 +336,11 @@ function renderRouteModal(){
 }
 function renderOriginEditor(){
   const saved=state.prefs.savedOrigin||{},rooms=knownRooms();
-  return `<div class="modal-backdrop"><section class="modal origin-modal simple-origin" role="dialog" aria-modal="true"><button class="modal-x" data-close-origin aria-label="Close">×</button><p class="kicker">MY USUAL START</p><h2>Where do you normally enter?</h2><p class="short-copy">Choose once. You can change it anytime.</p><div class="preset-starts">${CAMPUS_STARTS.map(x=>`<button class="preset-start ${saved.value===x.value?'selected':''}" data-preset-origin="${esc(x.value)}"><b>${esc(x.label)}</b><small>${esc(x.hint)}</small></button>`).join('')}</div><div class="simple-divider"><span>or</span></div><label class="simple-select-label">A classroom<select id="origin-room"><option value="">Choose room…</option>${rooms.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label><button id="save-origin" class="small-primary wide">Save classroom</button><details class="advanced-origin"><summary>Another place</summary><div class="advanced-origin-body"><input id="origin-custom-simple" placeholder="Mappedin place or link"/><button id="save-origin-custom" class="small-ghost wide">Save this place</button></div></details>${saved.value?'<button id="clear-origin" class="text-button danger-text">Remove saved start</button>':''}</section></div>`;
+  return `<div class="modal-backdrop"><section class="modal origin-modal simple-origin" role="dialog" aria-modal="true"><button class="modal-x" data-close-origin aria-label="Close">×</button><p class="kicker">MY USUAL START</p><h2>Where do you normally enter?</h2><p class="short-copy">Choose once. You can change it anytime.</p><button id="open-map-origin" class="map-origin-primary"><span class="map-person" aria-hidden="true"></span><span><b>Choose on campus map</b><small>Tap your usual entrance or starting point in Mappedin</small></span><span class="map-origin-arrow" aria-hidden="true">›</span></button><div class="simple-divider"><span>or choose a quick option</span></div><div class="preset-starts">${CAMPUS_STARTS.map(x=>`<button class="preset-start ${saved.value===x.value?'selected':''}" data-preset-origin="${esc(x.value)}"><b>${esc(x.label)}</b><small>${esc(x.hint)}</small></button>`).join('')}</div><div class="simple-divider"><span>or</span></div><label class="simple-select-label">A classroom<select id="origin-room"><option value="">Choose room…</option>${rooms.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label><button id="save-origin" class="small-primary wide">Save classroom</button><details class="advanced-origin"><summary>Another place</summary><div class="advanced-origin-body"><input id="origin-custom-simple" placeholder="Mappedin place or link"/><button id="save-origin-custom" class="small-ghost wide">Save this place</button></div></details>${saved.value?'<button id="clear-origin" class="text-button danger-text">Remove saved start</button>':''}</section></div>`;
+}
+function renderMapOriginPicker(){
+  const src=`${MAP}?embedded=true&camera-mode=pan-only`;
+  return `<div class="modal-backdrop map-picker-backdrop"><section class="modal map-picker-modal" role="dialog" aria-modal="true"><button class="modal-x" data-close-map-origin aria-label="Close">×</button><p class="kicker">CHOOSE ON MAP</p><h2>Set your usual start</h2><p class="map-picker-copy">Tap the entrance or mapped place you normally start from. We save it only on this device.</p><div class="map-picker-frame"><iframe id="mappedin-origin-map" title="TUS Athlone campus map" src="${esc(src)}" allow="clipboard-write; web-share" scrolling="no"></iframe></div><div class="map-picker-footer"><p id="map-origin-choice">Tap your usual entrance or starting place on the map.</p><button id="save-map-origin" class="small-primary" disabled>Save this start</button></div></section></div>`;
 }
 
 async function refreshPushStatus(){
@@ -341,6 +378,19 @@ async function watchAndLoad(forceWatch=false){
 }
 
 async function refreshLoop(){if(state.selection){await watchAndLoad(false);await refreshPushStatus();render()}setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS)}
+window.addEventListener('message',event=>{
+  if(event.origin!==MAPPEDIN_ORIGIN||!state.mapPicker)return;
+  const data=event.data;
+  if(!data||data.type!=='state-changed'||!data.payload)return;
+  const payload=data.payload;
+  const departure=Array.isArray(payload.departure)?payload.departure[0]:null;
+  const location=Array.isArray(payload.location)?payload.location[0]:null;
+  const value=departure||location;
+  if(!value)return;
+  state.mapPick={value:String(value),floor:payload.floor||null};
+  updateMapOriginCandidate();
+});
+
 async function init(){
   try{const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta').catch(()=>null)]);state.catalog=c.departments||[];state.meta=m;if(!state.catalog.length)state.error='Course catalogue is still being prepared. Try again in a few minutes.'}catch{state.error='Could not load the course catalogue from the service.'}
   if('serviceWorker'in navigator)await navigator.serviceWorker.register('/sw.js').catch(()=>{});
