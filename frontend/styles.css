@@ -146,3 +146,7 @@ html,body{max-width:100%;overflow-x:hidden}
   .mobile-week-info>strong{font-size:14px}
 }
 
+.first-load-note{display:grid;gap:5px;margin:0 0 20px;padding:14px 15px;border:1px solid #ded7c7;border-radius:15px;background:#f5f1e7;color:#3a382f}
+.first-load-note strong{font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#8b7640}
+.first-load-note span{font-size:12px;line-height:1.5;color:#6f6a60}
+@media(max-width:520px){.first-load-note{padding:13px 14px;margin-bottom:17px}.first-load-note span{font-size:12px}}
