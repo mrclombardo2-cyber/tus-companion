@@ -50,14 +50,12 @@ jobs:
             output="$(python cloud/collector/run_cloud_sync.py 2>&1)"
             code=$?
             set -e
-            printf '%s
-' "$output"
+            printf '%s\\n' "$output"
             if [ "$code" -ne 0 ]; then
               echo "Collector failed with exit code $code"
               exit "$code"
             fi
-            if printf '%s
-' "$output" | grep -q "\[sync\] no active groups yet"; then
+            if printf '%s\\n' "$output" | grep -q "\[sync\] no active groups yet"; then
               echo "All currently catalogued timetables are cached."
               exit 0
             fi
