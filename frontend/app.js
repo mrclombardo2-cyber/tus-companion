@@ -7,7 +7,7 @@ const INSTALL_DISMISSED='tus-companion-install-dismissed-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-29';
-const CLOUD_REFRESH_MS=5*60*1000;
+const CLOUD_REFRESH_MS=30*1000;
 const PENDING_REFRESH_MS=2500;
 const PENDING_KEY='tus-companion-pending-v1';
 
@@ -322,7 +322,7 @@ async function watchAndLoad(forceWatch=false){
   state.refreshing=true;
   try{
     let w=null;
-    if(forceWatch||!lastWatchAt||Date.now()-lastWatchAt>30*60*1000){
+    if(forceWatch||!lastWatchAt||Date.now()-lastWatchAt>45*1000){
       w=await api('/api/watch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({department_id:state.selection.department,group_id:state.selection.group})});
       lastWatchAt=Date.now();
     }

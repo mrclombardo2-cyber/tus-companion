@@ -20,7 +20,7 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       CLOUD_API_URL: ${{ secrets.CLOUD_API_URL }}
       CLOUD_ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
@@ -76,6 +76,22 @@ jobs:
         if: steps.preflight.outputs.run_collector == 'true'
         run: python -m playwright install --with-deps chromium
 
-      - name: Sync active timetables
+      - name: Fast sync while students are active
         if: steps.preflight.outputs.run_collector == 'true'
-        run: python cloud/collector/run_cloud_sync.py
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Open-app groups are refreshed repeatedly inside one runner so we do
+          # not wait for another GitHub scheduler start between checks.
+          for round in 1 2 3 4 5; do
+            echo "=== hot sync round $round/5 ==="
+            TUS_SYNC_SCOPE=hot python cloud/collector/run_cloud_sync.py
+            if [ "$round" -lt 5 ]; then
+              sleep 45
+            fi
+          done
+
+          # Keep push-only/recent groups fresh as the slower background tier.
+          echo "=== background active sync ==="
+          python cloud/collector/run_cloud_sync.py

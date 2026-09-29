@@ -1,9 +1,9 @@
 import webpush from "web-push";
 
-const APP_VERSION = "1.7.0-cloud";
+const APP_VERSION = "1.8.0-cloud";
 const LEGAL_VERSION = "2026-09-29";
 const INTEREST_TTL_DAYS = 30;
-const INTEREST_TOUCH_MINUTES = 60;
+const INTEREST_TOUCH_MINUTES = 1;
 const CATALOG_REFRESH_HOURS = 24;
 const MAP_URL = "https://app.mappedin.com/map/68b1b5dd74254a000bbf174b";
 
@@ -93,6 +93,7 @@ async function health(env) {
     version: APP_VERSION,
     collector: {
       schedule_target_seconds: 300,
+      hot_schedule_target_seconds: 60,
       last_cycle_finished_at: lastCycle,
       last_cycle_errors: lastCycleOk == null ? null : Number(lastCycleOk),
       catalog_updated_at: catalogAt,
@@ -250,6 +251,7 @@ async function pushTest(request, env) {
 
 async function adminSyncPlan(env, url = null) {
   const preload = url?.searchParams.get("preload") === "missing";
+  const hot = url?.searchParams.get("hot") === "1";
   const requestedLimit = Number(url?.searchParams.get("limit") || 25);
   const preloadLimit = Math.max(1, Math.min(50, Number.isFinite(requestedLimit) ? requestedLimit : 25));
   let res;
@@ -264,6 +266,17 @@ async function adminSyncPlan(env, url = null) {
        ORDER BY g.label
        LIMIT ?`,
     ).bind(preloadLimit).all();
+  } else if (hot) {
+    const hotCutoff = new Date(Date.now() - 3 * 60_000).toISOString();
+    res = await env.DB.prepare(
+      `SELECT i.group_id,i.department_id,g.label,s.payload,s.payload_hash,st.last_success_at,st.status
+       FROM interests i
+       LEFT JOIN groups g ON g.id=i.group_id
+       LEFT JOIN latest_snapshots s ON s.group_id=i.group_id
+       LEFT JOIN sync_state st ON st.group_id=i.group_id
+       WHERE i.last_seen_at >= ?
+       ORDER BY g.label`,
+    ).bind(hotCutoff).all();
   } else {
     const cutoff = new Date(Date.now() - INTEREST_TTL_DAYS * 86400_000).toISOString();
     res = await env.DB.prepare(
@@ -288,8 +301,8 @@ async function adminSyncPlan(env, url = null) {
   const refreshDue = !catalogAt || !Number.isFinite(catalogMs) || Date.now() - catalogMs >= CATALOG_REFRESH_HOURS * 3600_000;
 
   return json({
-    mode: preload ? "preload-missing" : "active",
-    catalog_refresh_due: preload ? false : refreshDue,
+    mode: preload ? "preload-missing" : hot ? "hot" : "active",
+    catalog_refresh_due: preload || hot ? false : refreshDue,
     groups: (res.results || []).map((r) => ({
       group_id: r.group_id,
       department_id: r.department_id,
