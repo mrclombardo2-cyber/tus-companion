@@ -1,0 +1,7 @@
+TUS Companion v13/v13.1 -> Cloud v14
+
+Copy the CONTENTS of this folder over the existing project root and replace files.
+Do not delete backend\data, backend\.tus-session, backend\.tus-browser-profile, backend\.venv, backend\secrets or config.ps1.
+
+The old deploy\oracle-free folder, if present locally, is obsolete and is not used by v14. It may remain; GO-LIVE.ps1 ignores it.
+Then run: .\GO-LIVE.ps1

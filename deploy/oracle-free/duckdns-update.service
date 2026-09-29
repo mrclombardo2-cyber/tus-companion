@@ -1,0 +1,8 @@
+[Unit]
+Description=Update DuckDNS record for TUS Companion
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tus-duckdns-update

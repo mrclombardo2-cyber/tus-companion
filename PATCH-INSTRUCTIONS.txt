@@ -1,0 +1,12 @@
+TUS Companion v4 -> v5 patch
+
+1. Stop the running server (Ctrl+C).
+2. Copy ALL files/folders from this patch over your existing project folder.
+3. Choose Replace all when Windows asks.
+4. Do NOT delete your existing backend/.tus-session, backend/.tus-browser-profile,
+   backend/data, backend/.venv or backend/secrets directories.
+5. Start .\run.ps1 again.
+6. Press Ctrl+F5 once in Chrome/Edge to load the v5 PWA/service worker.
+7. Open Settings and test AM/PM, Install app, Terms/Privacy and notifications.
+
+For public deployment, copy config.example.ps1 to config.ps1 and fill real operator/contact values.

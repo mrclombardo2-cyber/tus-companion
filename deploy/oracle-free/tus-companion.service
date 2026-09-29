@@ -1,0 +1,23 @@
+[Unit]
+Description=TUS Companion FastAPI + central timetable scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tuscompanion
+Group=tuscompanion
+WorkingDirectory=/opt/tus-companion/app/backend
+EnvironmentFile=/etc/tus-companion.env
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/tus-companion/playwright-browsers
+ExecStart=/opt/tus-companion/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/tus-companion/app/backend/data /opt/tus-companion/app/backend/.tus-session /opt/tus-companion/app/backend/.tus-browser-profile /opt/tus-companion/app/backend/secrets
+
+[Install]
+WantedBy=multi-user.target

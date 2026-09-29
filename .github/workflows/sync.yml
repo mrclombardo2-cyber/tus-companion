@@ -1,0 +1,77 @@
+name: TUS timetable sync
+
+on:
+  schedule:
+    # Offset from the top of the hour to reduce scheduler congestion.
+    - cron: "2-57/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tus-companion-cloud-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUD_API_URL: ${{ secrets.CLOUD_API_URL }}
+      CLOUD_ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
+      SESSION_CIPHER_KEY_B64: ${{ secrets.SESSION_CIPHER_KEY_B64 }}
+      VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+      VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+      TUS_PUSH_WORKERS: "16"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Check whether a browser sync is needed
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          plan="$(curl --fail --silent --show-error \
+            -H "x-admin-token: ${CLOUD_ADMIN_TOKEN}" \
+            "${CLOUD_API_URL%/}/api/admin/sync-plan")"
+          groups="$(printf '%s' "$plan" | jq '.groups | length')"
+          catalog_due="$(printf '%s' "$plan" | jq -r '.catalog_refresh_due')"
+          echo "active_groups=$groups"
+          echo "catalog_refresh_due=$catalog_due"
+          if [ "$groups" -gt 0 ] || [ "$catalog_due" = "true" ]; then
+            echo "run_collector=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_collector=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.preflight.outputs.run_collector == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.preflight.outputs.run_collector == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: cloud/collector/requirements.txt
+
+      - name: Cache Playwright browser
+        if: steps.preflight.outputs.run_collector == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-1.49.1-chromium
+
+      - name: Install collector dependencies
+        if: steps.preflight.outputs.run_collector == 'true'
+        run: pip install -r cloud/collector/requirements.txt
+
+      - name: Install Chromium runtime
+        if: steps.preflight.outputs.run_collector == 'true'
+        run: python -m playwright install --with-deps chromium
+
+      - name: Sync active timetables
+        if: steps.preflight.outputs.run_collector == 'true'
+        run: python cloud/collector/run_cloud_sync.py
