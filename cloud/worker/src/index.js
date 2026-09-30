@@ -2,7 +2,7 @@ import webpush from "web-push";
 import { ScientiaSession } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
-const APP_VERSION = "1.8.3-cloud";
+const APP_VERSION = "1.8.4-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -14,6 +14,8 @@ const MAX_SCHEDULED_QUEUE_MESSAGES = 1;
 const PRELOAD_GROUPS_PER_CYCLE = 1;
 const PRELOAD_ERROR_RETRY_HOURS = 6;
 const PUSH_SUBSCRIPTIONS_PER_JOB = 40;
+const REMINDER_SUBSCRIPTIONS_PER_JOB = 40;
+const REMINDER_WINDOW_MINUTES = 3;
 const MAP_URL = "https://app.mappedin.com/map/68b1b5dd74254a000bbf174b";
 const SESSION_AAD = new TextEncoder().encode("tus-companion-source-session-v1");
 
@@ -196,16 +198,18 @@ async function pushSubscribe(request, env) {
   const p256dh = String(req.keys?.p256dh || "");
   const auth = String(req.keys?.auth || "");
   const hidden = Array.isArray(req.hidden_modules) ? [...new Set(req.hidden_modules.slice(0, 100).map((x) => String(x).slice(0, 256)))].sort() : [];
+  const reminderMinutes = Number(req.reminder_minutes ?? 0);
   let endpointUrl = null;
   try { endpointUrl = new URL(endpoint); } catch {}
   if (!groupId || groupId.length > 256 || !endpoint || endpoint.length > 4096 || endpointUrl?.protocol !== "https:" ||
-      !p256dh || p256dh.length > 512 || !auth || auth.length > 256 || !(await groupExists(env, groupId))) {
+      !p256dh || p256dh.length > 512 || !auth || auth.length > 256 || ![0,15,30,60].includes(reminderMinutes) ||
+      !(await groupExists(env, groupId))) {
     return apiError(400, "invalid-subscription");
   }
   await env.DB.prepare(
-    "INSERT INTO push_subscriptions(endpoint,group_id,p256dh,auth,created_at,active,hidden_modules) VALUES(?,?,?,?,?,1,?) " +
-    "ON CONFLICT(endpoint) DO UPDATE SET group_id=excluded.group_id,p256dh=excluded.p256dh,auth=excluded.auth,active=1,hidden_modules=excluded.hidden_modules",
-  ).bind(endpoint, groupId, p256dh, auth, nowIso(), JSON.stringify(hidden)).run();
+    "INSERT INTO push_subscriptions(endpoint,group_id,p256dh,auth,created_at,active,hidden_modules,reminder_minutes) VALUES(?,?,?,?,?,1,?,?) " +
+    "ON CONFLICT(endpoint) DO UPDATE SET group_id=excluded.group_id,p256dh=excluded.p256dh,auth=excluded.auth,active=1,hidden_modules=excluded.hidden_modules,reminder_minutes=excluded.reminder_minutes",
+  ).bind(endpoint, groupId, p256dh, auth, nowIso(), JSON.stringify(hidden), reminderMinutes).run();
   return json({ ok: true });
 }
 
@@ -391,8 +395,8 @@ async function adminResult(request, env) {
 }
 
 async function adminSubscriptions(env, groupId) {
-  const res = await env.DB.prepare("SELECT endpoint,p256dh,auth,hidden_modules FROM push_subscriptions WHERE group_id=? AND active=1").bind(groupId).all();
-  return json((res.results || []).map((r) => ({ endpoint: r.endpoint, p256dh: r.p256dh, auth: r.auth, hidden_modules: parseHidden(r.hidden_modules) })));
+  const res = await env.DB.prepare("SELECT endpoint,p256dh,auth,hidden_modules,reminder_minutes FROM push_subscriptions WHERE group_id=? AND active=1").bind(groupId).all();
+  return json((res.results || []).map((r) => ({ endpoint: r.endpoint, p256dh: r.p256dh, auth: r.auth, hidden_modules: parseHidden(r.hidden_modules), reminder_minutes: Number(r.reminder_minutes || 0) })));
 }
 
 async function adminDeactivateSubscription(request, env) {
@@ -532,6 +536,109 @@ async function sendChangePushes(env, groupId, changesList, afterEndpoint = "") {
   return { sent, next_endpoint: rows.length > PUSH_SUBSCRIPTIONS_PER_JOB ? subs.at(-1)?.endpoint || null : null };
 }
 
+function dublinClock() {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Dublin", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date()).filter((p) => p.type !== "literal").map((p) => [p.type, p.value]));
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    minuteOfDay: Number(parts.hour) * 60 + Number(parts.minute),
+  };
+}
+
+function classStartMinute(value) {
+  const [h, m = "0"] = String(value || "").split(":").map(Number);
+  return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : -1;
+}
+
+function reminderEventKey(groupId, event) {
+  return [groupId, event?.date, event?.start, event?.end, event?.module, event?.activity, event?.room_code || event?.room_raw]
+    .map((x) => String(x || "").trim().toLowerCase()).join("|").slice(0, 1024);
+}
+
+function dueReminderEvents(snapshot, leadMinutes, hidden) {
+  const clock = dublinClock();
+  return (Array.isArray(snapshot?.events) ? snapshot.events : [])
+    .filter((event) => {
+      if (String(event?.date || "") !== clock.date) return false;
+      if (hidden.has(String(event?.module || "").toLowerCase())) return false;
+      const start = classStartMinute(event?.start);
+      if (start < 0) return false;
+      const delta = start - clock.minuteOfDay;
+      return delta <= leadMinutes && delta >= Math.max(0, leadMinutes - REMINDER_WINDOW_MINUTES);
+    })
+    .sort((a, b) => String(a.start || "").localeCompare(String(b.start || "")));
+}
+
+async function sendLessonReminders(env, afterEndpoint = "") {
+  if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT) return { sent: 0, next_endpoint: null };
+  const res = await env.DB.prepare(
+    "SELECT endpoint,group_id,p256dh,auth,hidden_modules,reminder_minutes FROM push_subscriptions " +
+    "WHERE active=1 AND reminder_minutes IN (15,30,60) AND endpoint>? ORDER BY endpoint LIMIT ?",
+  ).bind(afterEndpoint, REMINDER_SUBSCRIPTIONS_PER_JOB + 1).all();
+  const rows = res.results || [];
+  const subs = rows.slice(0, REMINDER_SUBSCRIPTIONS_PER_JOB);
+  if (!subs.length) return { sent: 0, next_endpoint: null };
+
+  webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
+  const snapshots = new Map();
+  let sent = 0;
+
+  for (const sub of subs) {
+    const lead = Number(sub.reminder_minutes || 0);
+    if (![15,30,60].includes(lead)) continue;
+    if (!snapshots.has(sub.group_id)) {
+      const row = await env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(sub.group_id).first();
+      snapshots.set(sub.group_id, safeParse(row?.payload, null));
+    }
+    const snapshot = snapshots.get(sub.group_id);
+    if (!snapshot) continue;
+    const hidden = new Set(parseHidden(sub.hidden_modules).map((x) => String(x).toLowerCase()));
+    const due = dueReminderEvents(snapshot, lead, hidden);
+
+    for (const event of due) {
+      const eventKey = reminderEventKey(sub.group_id, event);
+      if (!eventKey) continue;
+      const inserted = await env.DB.prepare(
+        "INSERT OR IGNORE INTO reminder_deliveries(endpoint,event_key,lead_minutes,sent_at) VALUES(?,?,?,?)",
+      ).bind(sub.endpoint, eventKey, lead, nowIso()).run();
+      if (!inserted.meta?.changes) continue;
+
+      const name = String(event.module || event.activity || "Class").trim();
+      const room = event.room_code || event.room_raw || "";
+      const body = [event.start || "", room, event.room_name || ""].filter(Boolean).join(" · ");
+      try {
+        await webpush.sendNotification(
+          { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+          JSON.stringify({
+            title: `${name} in ${lead} min`,
+            body,
+            url: "/?tab=today",
+            tag: `class-reminder:${eventKey}:${lead}`,
+          }),
+          { TTL: Math.max(300, lead * 60) },
+        );
+        sent++;
+      } catch (err) {
+        const statusCode = Number(err?.statusCode || 0);
+        if (statusCode === 404 || statusCode === 410) {
+          await env.DB.prepare("UPDATE push_subscriptions SET active=0 WHERE endpoint=?").bind(sub.endpoint).run();
+        } else {
+          await env.DB.prepare("DELETE FROM reminder_deliveries WHERE endpoint=? AND event_key=? AND lead_minutes=?")
+            .bind(sub.endpoint, eventKey, lead).run();
+          console.error("lesson reminder", sub.group_id, statusCode || err?.message || err);
+        }
+      }
+    }
+  }
+
+  const cleanupBefore = new Date(Date.now() - 21 * 86400_000).toISOString();
+  await env.DB.prepare("DELETE FROM reminder_deliveries WHERE sent_at<?").bind(cleanupBefore).run();
+  return { sent, next_endpoint: rows.length > REMINDER_SUBSCRIPTIONS_PER_JOB ? subs.at(-1)?.endpoint || null : null };
+}
+
+
 async function markSyncing(env, groupId) {
   const stamp = nowIso();
   await env.DB.prepare(
@@ -628,6 +735,10 @@ async function enqueueScheduledWork(env) {
       errors = 1;
       return;
     }
+    const reminderSubscriber = await env.DB.prepare(
+      "SELECT 1 AS ok FROM push_subscriptions WHERE active=1 AND reminder_minutes IN (15,30,60) LIMIT 1",
+    ).first();
+    if (reminderSubscriber) await env.SYNC_QUEUE.send({ type: "lesson-reminders", after_endpoint: "" });
     const catalogAt = await getMetaValue(env, "catalog_updated_at");
     const lastCatalogQueue = await getMetaValue(env, "catalog_last_enqueued_at");
     const catalogDue = !catalogAt || ageMs(catalogAt) >= CATALOG_REFRESH_HOURS * 3600_000;
@@ -733,6 +844,10 @@ export default {
         if (body.type === "catalog") await runCatalogJob(env);
         else if (body.type === "groups") await runGroupJob(env, body.groups || []);
         else if (body.type === "push-test") await sendTestPush(env, String(body.endpoint || ""));
+        else if (body.type === "lesson-reminders") {
+          const result = await sendLessonReminders(env, String(body.after_endpoint || ""));
+          if (result.next_endpoint) await env.SYNC_QUEUE.send({ type: "lesson-reminders", after_endpoint: result.next_endpoint });
+        }
         else if (body.type === "push-changes") {
           const changesList = Array.isArray(body.changes) ? body.changes : [];
           const result = await sendChangePushes(env, String(body.group_id || ""), changesList, String(body.after_endpoint || ""));
