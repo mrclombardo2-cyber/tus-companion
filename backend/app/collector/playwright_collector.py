@@ -148,18 +148,55 @@ def _open_student_set_by_name(page: Page, timeout_ms: int = 20_000) -> bool:
         return False
 
 
+def _try_silent_reauth(page: Page, timeout_ms: int = 25_000) -> bool:
+    """Try to renew an expired TUS/App Proxy session without user interaction.
+
+    Playwright storage_state normally also contains the user's existing Microsoft
+    sign-in cookies. When the shorter-lived TUS/App Proxy cookie expires, clicking
+    the normal Student gateway can often renew it silently. If Microsoft actually
+    asks for credentials/MFA, this helper stops and leaves interactive login for the
+    explicit reconnect flow.
+    """
+    if _ready(page) or _open_student_set_by_name(page):
+        return True
+
+    clicked = _click_student_gateway(page)
+    if not clicked:
+        return False
+
+    deadline = time.monotonic() + (timeout_ms / 1000)
+    while time.monotonic() < deadline:
+        if _ready(page) or _open_student_set_by_name(page, timeout_ms=5_000):
+            return True
+
+        for candidate in reversed(page.context.pages):
+            try:
+                if _ready(candidate) or _open_student_set_by_name(candidate, timeout_ms=5_000):
+                    if candidate is not page:
+                        page.goto(candidate.url, wait_until="domcontentloaded", timeout=30_000)
+                    return _ready(page) or _open_student_set_by_name(page, timeout_ms=5_000)
+            except Exception:
+                continue
+
+        # A silent Microsoft redirect can take a few seconds. Do not type, click
+        # credential controls, or attempt to bypass MFA here.
+        time.sleep(0.5)
+
+    return False
+
+
 def _ensure_timetable_page(page: Page, allow_interactive_login: bool) -> bool:
     """Reach Student Set - by Name from any normal TUS authenticated landing page.
 
-    If ``allow_interactive_login`` is False, this never starts an authentication
-    flow; it only uses an already-authenticated session and automatic TUS navigation.
+    In headless/cloud mode, first try a silent App Proxy renewal using the existing
+    Microsoft browser session. Actual credentials/MFA are still never automated.
     """
     if _ready(page):
         return True
     if _open_student_set_by_name(page):
         return True
     if not allow_interactive_login:
-        return False
+        return _try_silent_reauth(page)
     _complete_login(page)
     return _ready(page)
 
