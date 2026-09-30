@@ -98,9 +98,7 @@ jobs:
             VAPID_SUBJECT
           preCommands: |
             npm install --ignore-scripts
-            if ! wrangler queues info tus-companion-sync >/dev/null 2>&1; then
-              wrangler queues create tus-companion-sync
-            fi
+            wrangler queues info tus-companion-sync >/dev/null 2>&1 || wrangler queues create tus-companion-sync
             wrangler d1 migrations apply tus-companion-db --remote
           command: deploy
         env:
