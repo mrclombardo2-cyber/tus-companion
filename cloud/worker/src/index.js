@@ -62,10 +62,10 @@ function securityHeaders(response) {
   h.set("X-Content-Type-Options", "nosniff");
   h.set("X-Frame-Options", "DENY");
   h.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  h.set("Permissions-Policy", "geolocation=(self), camera=(), microphone=()");
+  h.set("Permissions-Policy", 'geolocation=(self "https://app.mappedin.com"), camera=(), microphone=()');
   h.set(
     "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src https://app.mappedin.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
   );
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers: h });
 }
