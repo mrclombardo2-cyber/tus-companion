@@ -169,3 +169,15 @@ header>div:first-child{min-width:0}
 @media(max-width:520px){
   .subject-card .tag{font-size:10px;padding:4px 8px}
 }
+
+/* v15.4 class reminder controls */
+.reminder-segmented{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  width:min(270px,100%);
+}
+.reminder-segmented button{min-width:0;padding:8px 7px}
+@media(max-width:520px){
+  .reminder-card{width:100%}
+  .reminder-segmented{width:100%;max-width:320px}
+}
