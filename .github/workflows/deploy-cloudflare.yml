@@ -1,5 +1,7 @@
 name: Deploy Cloudflare Worker
 
+# Deploys current main to Cloudflare.
+
 on:
   workflow_dispatch:
   push:
