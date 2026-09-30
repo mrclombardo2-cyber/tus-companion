@@ -1,6 +1,13 @@
 export const TUS_BASE_URL = "https://timetables.midlands.tus.ie/2627/default.aspx";
 export const TUS_SHOW_URL = "https://timetables.midlands.tus.ie/2627/showtimetable.aspx";
 export const TEXT_LAYOUT = "TextSpreadsheet;swsurl;student+set+textspreadsheet";
+const TUS_HOST = new URL(TUS_BASE_URL).hostname;
+const SSO_HOSTS = new Set(["login.microsoftonline.com"]);
+
+function allowedRedirectHost(url) {
+  const host = new URL(url).hostname.toLowerCase();
+  return host === TUS_HOST || SSO_HOSTS.has(host);
+}
 
 function decodeEntities(value) {
   return String(value ?? "")
@@ -198,7 +205,7 @@ export class ScientiaSession {
   }
 
   async request(url, init = {}, redirects = 0) {
-    if (redirects > 5) throw new Error("tus-too-many-redirects");
+    if (redirects > 12) throw new Error("tus-too-many-redirects");
     const headers = new Headers(init.headers || {});
     const cookie = this.cookies.header(url);
     if (cookie) headers.set("cookie", cookie);
@@ -212,7 +219,7 @@ export class ScientiaSession {
       const location = response.headers.get("location");
       if (!location) throw new Error(`tus-redirect-${response.status}`);
       const next = new URL(location, url);
-      if (next.hostname !== new URL(TUS_BASE_URL).hostname) throw new Error("source-session-expired");
+      if (next.protocol !== "https:" || !allowedRedirectHost(next.toString())) throw new Error("source-session-expired");
       const originalMethod = String(init.method || "GET").toUpperCase();
       const preserveRequest = response.status === 307 || response.status === 308;
       const nextInit = preserveRequest
