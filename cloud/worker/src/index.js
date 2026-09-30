@@ -2,7 +2,7 @@ import webpush from "web-push";
 import { ScientiaSession } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
-const APP_VERSION = "1.8.5-cloud";
+const APP_VERSION = "1.8.6-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -186,7 +186,19 @@ async function publicWatch(request, env) {
   let sync = await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
   const sourceError = await getMetaValue(env, "source_session_error");
   if (sourceError) {
-    sync = { ...(sync || {}), group_id: groupId, status: "error", error: "source-session-unavailable" };
+    const lastRetry = await getMetaValue(env, "source_session_last_retry_at");
+    const canRetry = sourceError === "source-session-expired" && (!lastRetry || ageMs(lastRetry) >= 2 * 60_000);
+    if (canRetry) {
+      try {
+        await setMetaValue(env, "source_session_last_retry_at", nowIso());
+        sync = await queueSingleGroupIfNeeded(env, groupId, departmentId, sync);
+      } catch (err) {
+        console.error("queue source recovery", err);
+        sync = { ...(sync || {}), group_id: groupId, status: "error", error: "source-session-unavailable" };
+      }
+    } else {
+      sync = { ...(sync || {}), group_id: groupId, status: "error", error: "source-session-unavailable" };
+    }
   } else {
     try { sync = await queueSingleGroupIfNeeded(env, groupId, departmentId, sync); } catch (err) { console.error("queue watch", err); }
   }
@@ -359,6 +371,7 @@ async function saveCatalogPayload(env, payload) {
   for (let i = 0; i < statements.length; i += 40) await env.DB.batch(statements.slice(i, i + 40));
   await setMetaValue(env, "catalog_updated_at", stamp);
   await setMetaValue(env, "source_session_error", "");
+  await setMetaValue(env, "source_session_last_retry_at", "");
   return { departments: deps.length, groups: departmentGroups.reduce((n, x) => n + (Array.isArray(x.groups) ? x.groups.length : 0), 0) };
 }
 
@@ -449,6 +462,7 @@ async function adminSourceSession(request, env) {
     "ON CONFLICT(id) DO UPDATE SET ciphertext=excluded.ciphertext,nonce=excluded.nonce,updated_at=excluded.updated_at",
   ).bind(String(req.ciphertext), String(req.nonce), nowIso()).run();
   await setMetaValue(env, "source_session_error", "");
+  await setMetaValue(env, "source_session_last_retry_at", "");
   return json({ ok: true });
 }
 
@@ -722,6 +736,7 @@ async function runGroupJob(env, groups) {
     throw fatal;
   }
   await setMetaValue(env, "source_session_error", "");
+  await setMetaValue(env, "source_session_last_retry_at", "");
   return results;
 }
 
@@ -761,6 +776,18 @@ async function enqueueScheduledWork(env) {
   try {
     const sourceError = await getMetaValue(env, "source_session_error");
     if (sourceError) {
+      const lastRetry = await getMetaValue(env, "source_session_last_retry_at");
+      const retryDue = sourceError === "source-session-expired" && (!lastRetry || ageMs(lastRetry) >= 15 * 60_000);
+      if (retryDue) {
+        const groups = await activeGroups(env);
+        const candidate = groups[0];
+        if (candidate) {
+          await setMetaValue(env, "source_session_last_retry_at", nowIso());
+          await queueSingleGroupIfNeeded(env, candidate.group_id, candidate.department_id, candidate);
+          groupsQueued = 1;
+          return;
+        }
+      }
       errors = 1;
       return;
     }
