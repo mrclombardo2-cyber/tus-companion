@@ -117,7 +117,7 @@ jobs:
           health="$(curl --fail --silent --show-error "$base/health")"
           printf '%s\n' "$health" | jq -e '.status == "ok" and .version == "1.8.4-cloud"' >/dev/null
           printf '%s\n' "$health" | jq -e '(.collector.source_session_error // "") == ""' >/dev/null
-          before="$(printf '%s\n' "$health" | jq -r '.collector.last_cycle_finished_at // "")"
+          before="$(printf '%s\n' "$health" | jq -r '.collector.last_cycle_finished_at // ""')"
 
           echo "Checking public catalog..."
           curl --fail --silent --show-error "$base/api/catalog" | jq -e '.departments | length > 0' >/dev/null
@@ -128,7 +128,7 @@ jobs:
             sleep 5
             current="$(curl --fail --silent --show-error "$base/health")"
             printf '%s\n' "$current" | jq -e '(.collector.source_session_error // "") == ""' >/dev/null
-            after="$(printf '%s\n' "$current" | jq -r '.collector.last_cycle_finished_at // "")"
+            after="$(printf '%s\n' "$current" | jq -r '.collector.last_cycle_finished_at // ""')"
             if [ -n "$after" ] && [ "$after" != "$before" ]; then
               echo "Scheduler cycle confirmed: $after"
               ok=true
