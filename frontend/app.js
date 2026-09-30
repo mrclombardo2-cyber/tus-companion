@@ -4,6 +4,7 @@ const FILTERS='tus-companion-hidden-modules-v1';
 const PREFS='tus-companion-preferences-v3';
 const LEGAL_ACK='tus-companion-legal-ack-v1';
 const INSTALL_DISMISSED='tus-companion-install-dismissed-v1';
+const NOTIFY_ONBOARDING='tus-companion-notify-onboarding-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
@@ -34,14 +35,14 @@ function subjectStyle(name){const c=subjectColor(name);return `--subject-bg:${c.
 let deferredInstallPrompt=null;
 let lastWatchAt=0;
 let lastLoadAt=0;
-let state={catalog:[],selection:readSelection(),snapshot:null,changes:[],sync:null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,legal:null,toast:''};
+let state={catalog:[],selection:readSelection(),snapshot:null,changes:[],sync:null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:''};
 
 class ApiError extends Error{
   constructor(status,detail,raw=''){super(detail||raw||`Request failed (${status})`);this.status=status;this.detail=detail;this.raw=raw}
 }
 
 window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;if(state.selection&&state.snapshot&&shouldAutoOfferInstall()){state.installModal=true;render()}});
-window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;state.installModal=false;localStorage.setItem(INSTALL_DISMISSED,String(Date.now()));toast('App installed.');});
+window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;state.installModal=false;localStorage.setItem(INSTALL_DISMISSED,String(Date.now()));toast('App installed.');setTimeout(()=>{if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},700)});
 
 function readSelection(){try{return JSON.parse(localStorage.getItem(STORE)||'null')}catch{return null}}
 function defaultPrefs(){return {timeFormat:'24'}}
@@ -66,7 +67,7 @@ function extractRoomCode(rawRoom=''){
 }
 function mapUrl(room){
   const code=extractRoomCode(room);
-  const u=new URL(`${MAP}/directions`);
+  const u=new URL(MAP);
   u.searchParams.set('location',code);
   return u.toString();
 }
@@ -191,8 +192,9 @@ function renderSettings(){
   return `<section class="settings"><div class="setting-card"><div><h3>Notifications</h3><p>${esc(pushStatusText())}. Receive room, time and class-change alerts.</p></div><div class="setting-actions"><button id="notify" class="small-primary">Enable / update</button>${state.push.subscribed?'<button id="test-push" class="small-ghost">Send test</button><button id="disable-push" class="small-ghost danger">Turn off</button>':''}</div></div>${installCard}<div class="setting-card"><div><h3>Time format</h3><p>Choose how class times are displayed.</p></div><div class="segmented"><button data-time="24" class="${state.prefs.timeFormat==='24'?'selected':''}">24-hour</button><button data-time="12" class="${state.prefs.timeFormat==='12'?'selected':''}">AM/PM</button></div></div><div class="setting-card"><div><h3>Campus map</h3><p>Room buttons open directions in the official TUS Mappedin viewer in a separate page. The map is not embedded in TUS Companion, preventing map reload loops.</p></div><a class="small-ghost settings-link" href="${MAP}" target="_blank" rel="noopener noreferrer">Open campus map ↗</a></div><button id="change" class="ghost">Change course</button><p>Selected group: <b>${esc(state.selection.groupLabel||state.selection.group)}</b></p><div class="module-box"><h3>My modules</h3><p>Hide alternatives you do not attend. Hidden modules are also excluded from future push alerts on this device.</p>${mods.map(m=>`<label class="module-row"><input type="checkbox" data-module="${esc(m)}" ${hidden.has(m)?'':'checked'}><span>${esc(m)}</span></label>`).join('')}</div><div class="legal-footer"><p><strong>Unofficial independent app.</strong> Not affiliated with, endorsed by, or authorized by Technological University of the Shannon (TUS). For student convenience only. Always verify critical timetable information using official TUS systems.</p><div><button data-legal="terms">Terms of Use</button><span>·</span><button data-legal="privacy">Privacy Notice</button></div><small>Opening a room leaves TUS Companion and sends that room identifier to the official Mappedin campus viewer.</small></div></section>`;
 }
 
-function renderOverlays(){return `${state.installModal?renderInstallModal():''}${state.legal?renderLegalModal(state.legal):''}`}
+function renderOverlays(){return `${state.installModal?renderInstallModal():''}${state.notifyModal?renderNotifyModal():''}${state.legal?renderLegalModal(state.legal):''}`}
 function renderInstallModal(){const d=deviceInfo();let title='Install TUS Companion',body='',action='';if(d.standalone){body='The app is already installed on this device.'}else if(deferredInstallPrompt){body='Install it for a full-screen app experience and quicker access to timetable alerts.';action='<button id="install-native" class="cta">Install app</button>'}else if(d.ios){body='On iPhone/iPad: open this page in Safari, tap the Share button, choose “Add to Home Screen”, then tap Add.'}else if(d.android){body='On Android: open the browser menu (⋮), choose “Install app” or “Add to Home screen”, then confirm.'}else{body='On Chrome or Edge desktop: use the Install icon in the address bar, or open the browser menu and choose “Install TUS Companion”.'}return `<div class="modal-backdrop" role="presentation"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="install-title"><button class="modal-x" data-close-modal aria-label="Close">×</button><p class="kicker">APP INSTALL</p><h2 id="install-title">${title}</h2><p>${body}</p>${action}<button id="install-later" class="ghost">Not now</button></section></div>`}
+function renderNotifyModal(){return `<div class="modal-backdrop" role="presentation"><section class="modal" role="dialog" aria-modal="true" aria-labelledby="notify-title"><button class="modal-x" data-close-notify aria-label="Close">×</button><p class="kicker">NOTIFICATIONS</p><h2 id="notify-title">Stay up to date</h2><p>Allow notifications on this device to get timetable changes as soon as they are detected.</p><button id="notify-onboarding-enable" class="cta">Enable notifications</button><button id="notify-onboarding-later" class="ghost">Not now</button></section></div>`}
 function legalContact(){const email=state.meta?.contact_email||'';return email?`Contact: <a href="mailto:${esc(email)}">${esc(email)}</a>.`:'Operator contact details must be configured before a public launch.'}
 function renderLegalModal(kind){
   const privacy=kind==='privacy';
@@ -205,10 +207,13 @@ function bindCommon(){
   APP.querySelectorAll('[data-week-day]').forEach(b=>b.onclick=()=>{state.weekDay=b.dataset.weekDay;render()});
   APP.querySelectorAll('[data-legal]').forEach(b=>b.onclick=()=>{state.legal=b.dataset.legal;render()});
   APP.querySelectorAll('[data-close-modal]').forEach(b=>b.onclick=()=>{state.legal=null;state.installModal=false;render()});
+  APP.querySelectorAll('[data-close-notify]').forEach(b=>b.onclick=()=>{localStorage.setItem(NOTIFY_ONBOARDING,'seen');state.notifyModal=false;render()});
   APP.querySelectorAll('[data-map-room]').forEach(b=>b.onclick=()=>{const room=(b.dataset.mapRoom||'').trim();if(room)window.open(mapUrl(room),'_blank','noopener,noreferrer')});
   APP.querySelectorAll('[data-time]').forEach(b=>b.onclick=()=>{state.prefs.timeFormat=b.dataset.time;savePrefs();render()});
   APP.querySelectorAll('[data-module]').forEach(box=>box.onchange=async()=>{const hidden=hiddenModules(),m=box.dataset.module;if(box.checked)hidden.delete(m);else hidden.add(m);localStorage.setItem(FILTERS,JSON.stringify([...hidden]));await updateExistingSubscription();render()});
   const notify=document.getElementById('notify');if(notify)notify.onclick=enableNotifications;
+  const notifyOnboarding=document.getElementById('notify-onboarding-enable');if(notifyOnboarding)notifyOnboarding.onclick=async()=>{localStorage.setItem(NOTIFY_ONBOARDING,'seen');state.notifyModal=false;await enableNotifications()};
+  const notifyLater=document.getElementById('notify-onboarding-later');if(notifyLater)notifyLater.onclick=()=>{localStorage.setItem(NOTIFY_ONBOARDING,'seen');state.notifyModal=false;render()};
   const test=document.getElementById('test-push');if(test)test.onclick=testNotification;
   const disable=document.getElementById('disable-push');if(disable)disable.onclick=disableNotifications;
   const install=document.getElementById('install-app');if(install)install.onclick=()=>{state.installModal=true;render()};
@@ -221,6 +226,7 @@ function changeCourse(){localStorage.removeItem(STORE);state.selection=null;stat
 function toast(message){state.toast=message;render();setTimeout(()=>{if(state.toast===message){state.toast='';render()}},2800)}
 function deviceInfo(){const ua=navigator.userAgent||'',ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1),android=/Android/i.test(ua),standalone=window.matchMedia?.('(display-mode: standalone)').matches||window.navigator.standalone===true;return {ios,android,desktop:!ios&&!android,standalone}}
 function shouldAutoOfferInstall(){const d=deviceInfo();if(d.standalone)return false;const last=Number(localStorage.getItem(INSTALL_DISMISSED)||0);return !last||Date.now()-last>14*24*60*60*1000}
+function shouldOfferNotifyOnboarding(){const d=deviceInfo();if(localStorage.getItem(NOTIFY_ONBOARDING))return false;if(!state.selection||!state.snapshot||!state.push.supported||state.push.subscribed||state.push.permission!=='default')return false;if(d.ios&&!d.standalone)return false;return true}
 async function triggerNativeInstall(){if(!deferredInstallPrompt){state.installModal=true;render();return}deferredInstallPrompt.prompt();const choice=await deferredInstallPrompt.userChoice;if(choice?.outcome==='accepted'){localStorage.setItem(INSTALL_DISMISSED,String(Date.now()))}deferredInstallPrompt=null;state.installModal=false;render()}
 
 async function refreshPushStatus(){
@@ -230,7 +236,7 @@ async function refreshPushStatus(){
 }
 async function updateExistingSubscription(){try{if(!state.selection||!('serviceWorker'in navigator))return;const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager?.getSubscription();if(!sub)return;const data=sub.toJSON();await api('/api/push/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({group_id:state.selection.group,endpoint:sub.endpoint,keys:data.keys,hidden_modules:[...hiddenModules()]})})}catch{}}
 async function enableNotifications(){
-  try{const d=deviceInfo();if(d.ios&&!d.standalone){state.installModal=true;render();return}if(!state.push.supported)throw new Error('Push notifications are not supported in this browser.');const reg=await navigator.serviceWorker.ready,{publicKey}=await api('/api/push/public-key');if(!publicKey)throw new Error('Push is not configured on the server yet.');const perm=await Notification.requestPermission();if(perm!=='granted'){await refreshPushStatus();render();return}let sub=await reg.pushManager.getSubscription();if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(publicKey)});const data=sub.toJSON();await api('/api/push/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({group_id:state.selection.group,endpoint:sub.endpoint,keys:data.keys,hidden_modules:[...hiddenModules()]})});await refreshPushStatus();toast('Notifications enabled on this device.')}catch(e){toast(e.message||String(e))}
+  try{const d=deviceInfo();if(d.ios&&!d.standalone){state.notifyModal=false;state.installModal=true;render();return}if(!state.push.supported)throw new Error('Push notifications are not supported in this browser.');const reg=await navigator.serviceWorker.ready,{publicKey}=await api('/api/push/public-key');if(!publicKey)throw new Error('Push is not configured on the server yet.');const perm=await Notification.requestPermission();if(perm!=='granted'){await refreshPushStatus();render();return}let sub=await reg.pushManager.getSubscription();if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(publicKey)});const data=sub.toJSON();await api('/api/push/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({group_id:state.selection.group,endpoint:sub.endpoint,keys:data.keys,hidden_modules:[...hiddenModules()]})});await refreshPushStatus();toast('Notifications enabled on this device.')}catch(e){toast(e.message||String(e))}
 }
 async function testNotification(){try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(!sub)throw new Error('Enable notifications first.');await api('/api/push/test',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});toast('Test notification queued.')}catch(e){toast(e.message||String(e))}}
 async function disableNotifications(){try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(sub){await api('/api/push/unsubscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})}).catch(()=>{});await sub.unsubscribe()}await refreshPushStatus();toast('Notifications turned off.')}catch(e){toast(e.message||String(e))}}
@@ -270,7 +276,7 @@ async function init(){
   }
   await refreshPushStatus();
   if(state.selection)await watchAndLoad(true);
-  if(state.selection&&state.snapshot&&shouldAutoOfferInstall())setTimeout(()=>{state.installModal=true;render()},1200);
+  if(state.selection&&state.snapshot){setTimeout(()=>{if(shouldAutoOfferInstall()){state.installModal=true;render()}else if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},900);}
   render();setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS);
 }
 function temporalUiSignature(){
