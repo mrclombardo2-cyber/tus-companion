@@ -38,7 +38,7 @@ Write-Host "Local TUS session: authenticated" -ForegroundColor Green
 Step "Load private Cloudflare reconnect configuration"
 $cloud = Get-Content -Raw $CloudConfigPath | ConvertFrom-Json
 foreach ($name in @("cloud_api_url","cloud_admin_token","session_cipher_key_b64")) {
-    if (-not $cloud.PSObject.Properties.Name.Contains($name) -or -not $cloud.$name) {
+    if (-not ($cloud.PSObject.Properties.Name -contains $name) -or -not $cloud.$name) {
         throw "Missing '$name' in .cloud.local.json. Run .\GO-LIVE.ps1 to repair the cloud configuration."
     }
 }
