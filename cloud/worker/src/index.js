@@ -1,41 +1,39 @@
 import webpush from "web-push";
+import { ScientiaSession } from "./scientia.js";
+import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
-const APP_VERSION = "1.8.0-cloud";
-const LEGAL_VERSION = "2026-09-29";
+const APP_VERSION = "1.8.1-cloud";
+const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
-const INTEREST_TOUCH_MINUTES = 1;
+const INTEREST_TOUCH_MINUTES = 60;
 const CATALOG_REFRESH_HOURS = 24;
+const GROUP_SYNC_MIN_SECONDS = 50;
+const QUEUED_STALE_MINUTES = 5;
+const GROUPS_PER_QUEUE_JOB = 7;
+const MAX_SCHEDULED_QUEUE_MESSAGES = 1;
+const PRELOAD_GROUPS_PER_CYCLE = 1;
+const PRELOAD_ERROR_RETRY_HOURS = 6;
+const PUSH_SUBSCRIPTIONS_PER_JOB = 40;
 const MAP_URL = "https://app.mappedin.com/map/68b1b5dd74254a000bbf174b";
+const SESSION_AAD = new TextEncoder().encode("tus-companion-source-session-v1");
 
-function nowIso() {
-  return new Date().toISOString();
-}
+function nowIso() { return new Date().toISOString(); }
 
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-      ...extraHeaders,
-    },
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...extraHeaders },
   });
 }
 
-function apiError(status, detail) {
-  return json({ detail }, status);
-}
+function apiError(status, detail) { return json({ detail }, status); }
 
 async function bodyJson(request, maxBytes = 65536) {
   const length = Number(request.headers.get("content-length") || 0);
   if (Number.isFinite(length) && length > maxBytes) throw new Error("payload-too-large");
   const text = await request.text();
   if (text.length > maxBytes) throw new Error("payload-too-large");
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error("invalid-json");
-  }
+  try { return JSON.parse(text); } catch { throw new Error("invalid-json"); }
 }
 
 function adminAuthorized(request, env) {
@@ -45,11 +43,7 @@ function adminAuthorized(request, env) {
 
 function safeParse(value, fallback = null) {
   if (value == null || value === "") return fallback;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
+  try { return JSON.parse(value); } catch { return fallback; }
 }
 
 function parseHidden(value) {
@@ -62,11 +56,8 @@ function securityHeaders(response) {
   h.set("X-Content-Type-Options", "nosniff");
   h.set("X-Frame-Options", "DENY");
   h.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  h.set("Permissions-Policy", 'geolocation=(self "https://app.mappedin.com"), camera=(), microphone=()');
-  h.set(
-    "Content-Security-Policy",
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-src https://app.mappedin.com; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
-  );
+  h.set("Permissions-Policy", "geolocation=(), camera=(), microphone=()");
+  h.set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers: h });
 }
 
@@ -82,21 +73,22 @@ async function setMetaValue(env, key, value) {
 }
 
 async function health(env) {
-  const [lastCycle, lastCycleOk, catalogAt] = await Promise.all([
+  const [lastCycle, lastCycleErrors, catalogAt, sourceError] = await Promise.all([
     getMetaValue(env, "last_cycle_finished_at"),
     getMetaValue(env, "last_cycle_errors"),
     getMetaValue(env, "catalog_updated_at"),
+    getMetaValue(env, "source_session_error"),
   ]);
   return json({
     status: "ok",
-    platform: "cloudflare-workers-d1",
+    platform: "cloudflare-workers-d1-queues",
     version: APP_VERSION,
     collector: {
-      schedule_target_seconds: 300,
-      hot_schedule_target_seconds: 60,
+      schedule_target_seconds: 60,
       last_cycle_finished_at: lastCycle,
-      last_cycle_errors: lastCycleOk == null ? null : Number(lastCycleOk),
+      last_cycle_errors: lastCycleErrors == null ? null : Number(lastCycleErrors),
       catalog_updated_at: catalogAt,
+      source_session_error: sourceError || null,
     },
   });
 }
@@ -111,9 +103,7 @@ async function catalog(env) {
     if (!by.has(g.department_id)) by.set(g.department_id, []);
     by.get(g.department_id).push({ id: g.id, label: g.label });
   }
-  return json({
-    departments: (depsRes.results || []).map((d) => ({ id: d.id, label: d.label, groups: by.get(d.id) || [] })),
-  });
+  return json({ departments: (depsRes.results || []).map((d) => ({ id: d.id, label: d.label, groups: by.get(d.id) || [] })) });
 }
 
 async function groupExists(env, groupId, departmentId = null) {
@@ -121,6 +111,27 @@ async function groupExists(env, groupId, departmentId = null) {
     ? env.DB.prepare("SELECT 1 AS ok FROM groups WHERE id=? AND department_id=? LIMIT 1").bind(groupId, departmentId)
     : env.DB.prepare("SELECT 1 AS ok FROM groups WHERE id=? LIMIT 1").bind(groupId);
   return Boolean(await query.first());
+}
+
+function ageMs(iso) {
+  const ms = Date.parse(iso || "");
+  return Number.isFinite(ms) ? Date.now() - ms : Infinity;
+}
+
+async function queueSingleGroupIfNeeded(env, groupId, departmentId, currentSync = null) {
+  if (!env.SYNC_QUEUE) return currentSync;
+  const sync = currentSync || await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
+  const recentlyQueued = sync && ["queued", "syncing"].includes(sync.status) && ageMs(sync.last_attempt_at) < QUEUED_STALE_MINUTES * 60_000;
+  const recentlySynced = sync?.last_success_at && ageMs(sync.last_success_at) < GROUP_SYNC_MIN_SECONDS * 1000;
+  if (recentlyQueued || recentlySynced) return sync;
+
+  const stamp = nowIso();
+  await env.DB.prepare(
+    "INSERT INTO sync_state(group_id,last_attempt_at,last_success_at,status,error) VALUES(?,?,?,?,?) " +
+    "ON CONFLICT(group_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,status=excluded.status,error=NULL",
+  ).bind(groupId, stamp, sync?.last_success_at || null, "queued", null).run();
+  await env.SYNC_QUEUE.send({ type: "groups", groups: [{ group_id: groupId, department_id: departmentId }] });
+  return { ...(sync || {}), group_id: groupId, last_attempt_at: stamp, status: "queued", error: null };
 }
 
 async function publicWatch(request, env) {
@@ -133,9 +144,8 @@ async function publicWatch(request, env) {
   }
 
   const existing = await env.DB.prepare("SELECT last_seen_at FROM interests WHERE group_id=?").bind(groupId).first();
-  const now = Date.now();
   const oldMs = existing?.last_seen_at ? Date.parse(existing.last_seen_at) : 0;
-  if (!existing || !Number.isFinite(oldMs) || now - oldMs >= INTEREST_TOUCH_MINUTES * 60_000) {
+  if (!existing || !Number.isFinite(oldMs) || Date.now() - oldMs >= INTEREST_TOUCH_MINUTES * 60_000) {
     await env.DB.prepare(
       "INSERT INTO interests(group_id,department_id,last_seen_at) VALUES(?,?,?) ON CONFLICT(group_id) DO UPDATE SET department_id=excluded.department_id,last_seen_at=excluded.last_seen_at",
     ).bind(groupId, departmentId, nowIso()).run();
@@ -143,13 +153,13 @@ async function publicWatch(request, env) {
 
   const snap = await env.DB.prepare("SELECT 1 AS ok FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
   let sync = await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
-  if (!sync) {
-    const stamp = nowIso();
-    await env.DB.prepare(
-      "INSERT INTO sync_state(group_id,last_attempt_at,last_success_at,status,error) VALUES(?,?,?,?,?)",
-    ).bind(groupId, stamp, null, "queued", null).run();
-    sync = { group_id: groupId, last_attempt_at: stamp, last_success_at: null, status: "queued", error: null };
+  const sourceError = await getMetaValue(env, "source_session_error");
+  if (sourceError) {
+    sync = { ...(sync || {}), group_id: groupId, status: "error", error: "source-session-unavailable" };
+  } else {
+    try { sync = await queueSingleGroupIfNeeded(env, groupId, departmentId, sync); } catch (err) { console.error("queue watch", err); }
   }
+  if (!sync) sync = { group_id: groupId, last_attempt_at: null, last_success_at: null, status: "never-synced", error: null };
   return json({ ok: true, has_snapshot: Boolean(snap), sync });
 }
 
@@ -171,18 +181,11 @@ async function changes(env, groupId, url) {
   const res = await env.DB.prepare(
     "SELECT id,group_id,detected_at,change_type,module,activity,day,before_json,after_json FROM changes WHERE group_id=? ORDER BY id DESC LIMIT ?",
   ).bind(groupId, limit).all();
-  const rows = (res.results || []).map((r) => ({
-    id: r.id,
-    group_id: r.group_id,
-    detected_at: r.detected_at,
-    change_type: r.change_type,
-    module: r.module,
-    activity: r.activity,
-    day: r.day,
-    before: safeParse(r.before_json, null),
-    after: safeParse(r.after_json, null),
-  }));
-  return json(rows);
+  return json((res.results || []).map((r) => ({
+    id: r.id, group_id: r.group_id, detected_at: r.detected_at, change_type: r.change_type,
+    module: r.module, activity: r.activity, day: r.day,
+    before: safeParse(r.before_json, null), after: safeParse(r.after_json, null),
+  })));
 }
 
 async function pushSubscribe(request, env) {
@@ -192,9 +195,7 @@ async function pushSubscribe(request, env) {
   const endpoint = String(req.endpoint || "");
   const p256dh = String(req.keys?.p256dh || "");
   const auth = String(req.keys?.auth || "");
-  const hidden = Array.isArray(req.hidden_modules)
-    ? [...new Set(req.hidden_modules.slice(0, 100).map((x) => String(x).slice(0, 256)))].sort()
-    : [];
+  const hidden = Array.isArray(req.hidden_modules) ? [...new Set(req.hidden_modules.slice(0, 100).map((x) => String(x).slice(0, 256)))].sort() : [];
   let endpointUrl = null;
   try { endpointUrl = new URL(endpoint); } catch {}
   if (!groupId || groupId.length > 256 || !endpoint || endpoint.length > 4096 || endpointUrl?.protocol !== "https:" ||
@@ -222,108 +223,87 @@ async function pushTest(request, env) {
   try { req = await bodyJson(request); } catch { return apiError(400, "invalid-json"); }
   const endpoint = String(req.endpoint || "");
   if (!endpoint || endpoint.length > 4096) return apiError(400, "invalid-subscription");
-  const row = await env.DB.prepare(
-    "SELECT endpoint,p256dh,auth,active FROM push_subscriptions WHERE endpoint=? LIMIT 1",
-  ).bind(endpoint).first();
-  if (!row || !row.active) return apiError(404, "subscription-not-found");
+  const row = await env.DB.prepare("SELECT 1 AS ok FROM push_subscriptions WHERE endpoint=? AND active=1 LIMIT 1").bind(endpoint).first();
+  if (!row) return apiError(404, "subscription-not-found");
+  await env.SYNC_QUEUE.send({ type: "push-test", endpoint });
+  return json({ queued: true });
+}
 
+async function sendTestPush(env, endpoint) {
+  const row = await env.DB.prepare("SELECT endpoint,p256dh,auth,active FROM push_subscriptions WHERE endpoint=? LIMIT 1").bind(endpoint).first();
+  if (!row || !row.active) return { sent: 0, reason: "subscription-not-found" };
   webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
   try {
     await webpush.sendNotification(
       { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
-      JSON.stringify({
-        title: "TUS Companion test",
-        body: "Notifications are working on this device.",
-        url: "/?tab=settings",
-        tag: "tus-companion-test",
-      }),
+      JSON.stringify({ title: "TUS Companion test", body: "Notifications are working on this device.", url: "/?tab=settings", tag: "tus-companion-test" }),
       { TTL: 60 },
     );
-    return json({ sent: 1, disabled: false });
+    return { sent: 1 };
   } catch (err) {
     const statusCode = Number(err?.statusCode || 0);
     if (statusCode === 404 || statusCode === 410) {
       await env.DB.prepare("UPDATE push_subscriptions SET active=0 WHERE endpoint=?").bind(endpoint).run();
+      return { sent: 0, disabled: true, status: statusCode };
     }
-    return apiError(503, `push-failed${statusCode ? `-${statusCode}` : ""}`);
+    throw err;
   }
 }
 
-async function adminSyncPlan(env, url = null) {
-  const preload = url?.searchParams.get("preload") === "missing";
-  const hot = url?.searchParams.get("hot") === "1";
-  const requestedLimit = Number(url?.searchParams.get("limit") || 25);
-  const preloadLimit = Math.max(1, Math.min(50, Number.isFinite(requestedLimit) ? requestedLimit : 25));
-  let res;
+async function activeGroups(env) {
+  const cutoff = new Date(Date.now() - INTEREST_TTL_DAYS * 86400_000).toISOString();
+  const res = await env.DB.prepare(
+    `WITH active AS (
+       SELECT group_id, department_id FROM interests WHERE last_seen_at >= ?
+       UNION
+       SELECT DISTINCT p.group_id, g.department_id
+       FROM push_subscriptions p JOIN groups g ON g.id=p.group_id
+       WHERE p.active=1
+     )
+     SELECT a.group_id,a.department_id,g.label,s.payload,s.payload_hash,st.last_attempt_at,st.last_success_at,st.status
+     FROM active a
+     LEFT JOIN groups g ON g.id=a.group_id
+     LEFT JOIN latest_snapshots s ON s.group_id=a.group_id
+     LEFT JOIN sync_state st ON st.group_id=a.group_id
+     ORDER BY CASE WHEN st.last_success_at IS NULL THEN 0 ELSE 1 END, st.last_success_at, g.label`,
+  ).bind(cutoff).all();
+  return res.results || [];
+}
 
-  if (preload) {
-    res = await env.DB.prepare(
-      `SELECT g.id AS group_id,g.department_id,g.label,s.payload,s.payload_hash,st.last_success_at,st.status
-       FROM groups g
-       LEFT JOIN latest_snapshots s ON s.group_id=g.id
-       LEFT JOIN sync_state st ON st.group_id=g.id
-       WHERE s.group_id IS NULL
-       ORDER BY g.label
-       LIMIT ?`,
-    ).bind(preloadLimit).all();
-  } else if (hot) {
-    const hotCutoff = new Date(Date.now() - 3 * 60_000).toISOString();
-    res = await env.DB.prepare(
-      `WITH hot_groups AS (
-         SELECT group_id, department_id FROM interests WHERE last_seen_at >= ?
-         UNION
-         SELECT DISTINCT p.group_id, g.department_id
-         FROM push_subscriptions p JOIN groups g ON g.id=p.group_id
-         WHERE p.active=1
-       )
-       SELECT h.group_id,h.department_id,g.label,s.payload,s.payload_hash,st.last_success_at,st.status
-       FROM hot_groups h
-       LEFT JOIN groups g ON g.id=h.group_id
-       LEFT JOIN latest_snapshots s ON s.group_id=h.group_id
-       LEFT JOIN sync_state st ON st.group_id=h.group_id
-       ORDER BY g.label`,
-    ).bind(hotCutoff).all();
-  } else {
-    const cutoff = new Date(Date.now() - INTEREST_TTL_DAYS * 86400_000).toISOString();
-    res = await env.DB.prepare(
-      `WITH active AS (
-         SELECT group_id, department_id FROM interests WHERE last_seen_at >= ?
-         UNION
-         SELECT DISTINCT p.group_id, g.department_id
-         FROM push_subscriptions p JOIN groups g ON g.id=p.group_id
-         WHERE p.active=1
-       )
-       SELECT a.group_id,a.department_id,g.label,s.payload,s.payload_hash,st.last_success_at,st.status
-       FROM active a
-       LEFT JOIN groups g ON g.id=a.group_id
-       LEFT JOIN latest_snapshots s ON s.group_id=a.group_id
-       LEFT JOIN sync_state st ON st.group_id=a.group_id
-       ORDER BY g.label`,
-    ).bind(cutoff).all();
-  }
 
+async function preloadCandidates(env, limit = PRELOAD_GROUPS_PER_CYCLE) {
+  const retryBefore = new Date(Date.now() - PRELOAD_ERROR_RETRY_HOURS * 3600_000).toISOString();
+  const res = await env.DB.prepare(
+    `SELECT g.id AS group_id,g.department_id,g.label,d.label AS department_label,st.last_attempt_at,st.status
+     FROM groups g
+     JOIN departments d ON d.id=g.department_id
+     LEFT JOIN latest_snapshots s ON s.group_id=g.id
+     LEFT JOIN sync_state st ON st.group_id=g.id
+     WHERE s.group_id IS NULL
+       AND (st.status IS NULL OR st.status <> 'error' OR st.last_attempt_at IS NULL OR st.last_attempt_at < ?)
+       AND (st.status IS NULL OR st.status NOT IN ('queued','syncing') OR st.last_attempt_at IS NULL OR st.last_attempt_at < ?)
+     ORDER BY CASE WHEN lower(d.label) LIKE '%business%' OR lower(g.label) LIKE '%business%' THEN 0 ELSE 1 END,
+              d.label,g.label
+     LIMIT ?`,
+  ).bind(retryBefore, new Date(Date.now() - QUEUED_STALE_MINUTES * 60_000).toISOString(), Math.max(0, Number(limit) || 0)).all();
+  return res.results || [];
+}
+
+async function adminSyncPlan(env) {
+  const groups = await activeGroups(env);
   const catalogAt = await getMetaValue(env, "catalog_updated_at");
-  const catalogMs = catalogAt ? Date.parse(catalogAt) : 0;
-  const refreshDue = !catalogAt || !Number.isFinite(catalogMs) || Date.now() - catalogMs >= CATALOG_REFRESH_HOURS * 3600_000;
-
+  const refreshDue = !catalogAt || ageMs(catalogAt) >= CATALOG_REFRESH_HOURS * 3600_000;
   return json({
-    mode: preload ? "preload-missing" : hot ? "hot" : "active",
-    catalog_refresh_due: preload || hot ? false : refreshDue,
-    groups: (res.results || []).map((r) => ({
-      group_id: r.group_id,
-      department_id: r.department_id,
-      label: r.label,
-      snapshot: safeParse(r.payload, null),
-      payload_hash: r.payload_hash || null,
-      last_success_at: r.last_success_at || null,
-      status: r.status || null,
+    catalog_refresh_due: refreshDue,
+    groups: groups.map((r) => ({
+      group_id: r.group_id, department_id: r.department_id, label: r.label,
+      snapshot: safeParse(r.payload, null), payload_hash: r.payload_hash || null,
+      last_success_at: r.last_success_at || null, status: r.status || null,
     })),
   });
 }
 
-async function adminCatalog(request, env) {
-  let payload;
-  try { payload = await bodyJson(request, 2_000_000); } catch { return apiError(400, "invalid-json"); }
+async function saveCatalogPayload(env, payload) {
   const deps = Array.isArray(payload.departments) ? payload.departments : [];
   const departmentGroups = Array.isArray(payload.department_groups) ? payload.department_groups : [];
   const stamp = nowIso();
@@ -343,28 +323,31 @@ async function adminCatalog(request, env) {
       ).bind(String(g.value), dep, String(g.label), stamp));
     }
   }
-  for (let i = 0; i < statements.length; i += 40) {
-    await env.DB.batch(statements.slice(i, i + 40));
-  }
+  for (let i = 0; i < statements.length; i += 40) await env.DB.batch(statements.slice(i, i + 40));
   await setMetaValue(env, "catalog_updated_at", stamp);
-  return json({ departments: deps.length, groups: departmentGroups.reduce((n, x) => n + (Array.isArray(x.groups) ? x.groups.length : 0), 0) });
+  await setMetaValue(env, "source_session_error", "");
+  return { departments: deps.length, groups: departmentGroups.reduce((n, x) => n + (Array.isArray(x.groups) ? x.groups.length : 0), 0) };
 }
 
-async function adminResult(request, env) {
-  let req;
-  try { req = await bodyJson(request); } catch { return apiError(400, "invalid-json"); }
+async function adminCatalog(request, env) {
+  let payload;
+  try { payload = await bodyJson(request, 2_000_000); } catch { return apiError(400, "invalid-json"); }
+  return json(await saveCatalogPayload(env, payload));
+}
+
+async function saveResultPayload(env, req) {
   const groupId = String(req.group_id || "");
-  if (!groupId) return apiError(400, "missing-group-id");
+  if (!groupId) throw new Error("missing-group-id");
   const stamp = nowIso();
   if (req.error) {
     await env.DB.prepare(
       "INSERT INTO sync_state(group_id,last_attempt_at,last_success_at,status,error) VALUES(?,?,?,?,?) " +
       "ON CONFLICT(group_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,status=excluded.status,error=excluded.error",
     ).bind(groupId, stamp, null, "error", String(req.error).slice(0, 1000)).run();
-    return json({ ok: true, saved_snapshot: false, saved_changes: 0 });
+    return { ok: true, saved_snapshot: false, saved_changes: 0, inserted_changes: [] };
   }
+  if (!req.snapshot || !req.payload_hash) throw new Error("missing-snapshot");
 
-  if (!req.snapshot || !req.payload_hash) return apiError(400, "missing-snapshot");
   let savedSnapshot = false;
   const existing = await env.DB.prepare("SELECT payload_hash FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
   if (!existing || existing.payload_hash !== String(req.payload_hash)) {
@@ -376,42 +359,40 @@ async function adminResult(request, env) {
   }
 
   let savedChanges = 0;
-  const changeList = Array.isArray(req.changes) ? req.changes.slice(0, 40) : [];
-  for (const ch of changeList) {
+  const insertedChanges = [];
+  for (const ch of (Array.isArray(req.changes) ? req.changes.slice(0, 80) : [])) {
     if (!ch?.change_type || !ch?.dedupe_hash) continue;
     const result = await env.DB.prepare(
       "INSERT OR IGNORE INTO changes(group_id,detected_at,change_type,module,activity,day,before_json,after_json,dedupe_hash) VALUES(?,?,?,?,?,?,?,?,?)",
     ).bind(
-      groupId,
-      String(ch.detected_at || stamp),
-      String(ch.change_type),
-      ch.module == null ? null : String(ch.module),
-      ch.activity == null ? null : String(ch.activity),
-      ch.day == null ? null : String(ch.day),
-      ch.before == null ? null : JSON.stringify(ch.before),
-      ch.after == null ? null : JSON.stringify(ch.after),
-      String(ch.dedupe_hash),
+      groupId, String(ch.detected_at || stamp), String(ch.change_type),
+      ch.module == null ? null : String(ch.module), ch.activity == null ? null : String(ch.activity), ch.day == null ? null : String(ch.day),
+      ch.before == null ? null : JSON.stringify(ch.before), ch.after == null ? null : JSON.stringify(ch.after), String(ch.dedupe_hash),
     ).run();
-    if (result.meta?.changes) savedChanges += Number(result.meta.changes);
+    if (result.meta?.changes) { savedChanges += Number(result.meta.changes); insertedChanges.push(ch); }
   }
 
   await env.DB.prepare(
     "INSERT INTO sync_state(group_id,last_attempt_at,last_success_at,status,error) VALUES(?,?,?,?,?) " +
     "ON CONFLICT(group_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,last_success_at=excluded.last_success_at,status=excluded.status,error=NULL",
   ).bind(groupId, stamp, stamp, "ok", null).run();
-  return json({ ok: true, saved_snapshot: savedSnapshot, saved_changes: savedChanges });
+  return { ok: true, saved_snapshot: savedSnapshot, saved_changes: savedChanges, inserted_changes: insertedChanges };
+}
+
+async function adminResult(request, env) {
+  let req;
+  try { req = await bodyJson(request); } catch { return apiError(400, "invalid-json"); }
+  try {
+    const out = await saveResultPayload(env, req);
+    return json({ ok: out.ok, saved_snapshot: out.saved_snapshot, saved_changes: out.saved_changes });
+  } catch (err) {
+    return apiError(400, String(err?.message || err));
+  }
 }
 
 async function adminSubscriptions(env, groupId) {
-  const res = await env.DB.prepare(
-    "SELECT endpoint,p256dh,auth,hidden_modules FROM push_subscriptions WHERE group_id=? AND active=1",
-  ).bind(groupId).all();
-  return json((res.results || []).map((r) => ({
-    endpoint: r.endpoint,
-    p256dh: r.p256dh,
-    auth: r.auth,
-    hidden_modules: parseHidden(r.hidden_modules),
-  })));
+  const res = await env.DB.prepare("SELECT endpoint,p256dh,auth,hidden_modules FROM push_subscriptions WHERE group_id=? AND active=1").bind(groupId).all();
+  return json((res.results || []).map((r) => ({ endpoint: r.endpoint, p256dh: r.p256dh, auth: r.auth, hidden_modules: parseHidden(r.hidden_modules) })));
 }
 
 async function adminDeactivateSubscription(request, env) {
@@ -434,12 +415,185 @@ async function adminSourceSession(request, env) {
     "INSERT INTO source_session(id,ciphertext,nonce,updated_at) VALUES(1,?,?,?) " +
     "ON CONFLICT(id) DO UPDATE SET ciphertext=excluded.ciphertext,nonce=excluded.nonce,updated_at=excluded.updated_at",
   ).bind(String(req.ciphertext), String(req.nonce), nowIso()).run();
+  await setMetaValue(env, "source_session_error", "");
   return json({ ok: true });
 }
 
 async function adminCycle(request, env) {
   let req;
   try { req = await bodyJson(request); } catch { return apiError(400, "invalid-json"); }
+  await recordCycle(env, req);
+  return json({ ok: true });
+}
+
+function b64Bytes(value) {
+  let s = String(value || "").trim().replace(/-/g, "+").replace(/_/g, "/");
+  s += "=".repeat((4 - (s.length % 4)) % 4);
+  const raw = atob(s);
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+function bytesB64(bytes) {
+  let raw = "";
+  for (const b of bytes) raw += String.fromCharCode(b);
+  return btoa(raw).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+async function sourceCryptoKey(env) {
+  const bytes = b64Bytes(env.SESSION_CIPHER_KEY_B64 || "");
+  if (bytes.length !== 32) throw new Error("source-session-key-missing-or-invalid");
+  return crypto.subtle.importKey("raw", bytes, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+async function loadSourceStorageState(env) {
+  const row = await env.DB.prepare("SELECT ciphertext,nonce FROM source_session WHERE id=1").first();
+  if (!row?.ciphertext || !row?.nonce) throw new Error("source-session-not-configured");
+  const key = await sourceCryptoKey(env);
+  let plain;
+  try {
+    plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64Bytes(row.nonce), additionalData: SESSION_AAD }, key, b64Bytes(row.ciphertext));
+  } catch {
+    throw new Error("source-session-decryption-failed");
+  }
+  try { return JSON.parse(new TextDecoder().decode(plain)); } catch { throw new Error("source-session-invalid-json"); }
+}
+
+async function saveSourceStorageState(env, state) {
+  const key = await sourceCryptoKey(env);
+  const nonce = crypto.getRandomValues(new Uint8Array(12));
+  const plaintext = new TextEncoder().encode(JSON.stringify(state));
+  const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: SESSION_AAD }, key, plaintext);
+  await env.DB.prepare(
+    "INSERT INTO source_session(id,ciphertext,nonce,updated_at) VALUES(1,?,?,?) " +
+    "ON CONFLICT(id) DO UPDATE SET ciphertext=excluded.ciphertext,nonce=excluded.nonce,updated_at=excluded.updated_at",
+  ).bind(bytesB64(new Uint8Array(encrypted)), bytesB64(nonce), nowIso()).run();
+}
+
+function notificationBody(ch) {
+  const a = ch.after || {}, b = ch.before || {};
+  const name = ch.module || ch.activity || "Class";
+  if (ch.change_type === "ROOM_CHANGED") return `${name}: ${b.room_code || b.room_raw || "?"} → ${a.room_code || a.room_raw || "?"}`;
+  if (ch.change_type === "TIME_CHANGED") return `${name}: ${b.start || "?"} → ${a.start || "?"}`;
+  if (ch.change_type === "CLASS_ADDED") return `New class: ${name} ${a.start || ""}`.trim();
+  if (ch.change_type === "CLASS_REMOVED") return `Class removed: ${name} ${b.start || ""}`.trim();
+  if (ch.change_type === "LECTURER_CHANGED") return `${name}: lecturer changed`;
+  if (ch.change_type === "CLASS_TYPE_CHANGED") return `${name}: ${b.type || "?"} → ${a.type || "?"}`;
+  if (ch.change_type === "TEACHING_WEEKS_CHANGED") return `${name}: teaching weeks changed`;
+  return name;
+}
+
+function compactPushChanges(changesList) {
+  return (Array.isArray(changesList) ? changesList : []).slice(0, 80).map((ch) => ({
+    module: ch?.module == null ? "" : String(ch.module).slice(0, 256),
+    body: notificationBody(ch).slice(0, 420),
+  }));
+}
+
+async function sendChangePushes(env, groupId, changesList, afterEndpoint = "") {
+  if (!changesList.length || !env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY || !env.VAPID_SUBJECT) return { sent: 0, next_endpoint: null };
+  const res = await env.DB.prepare(
+    "SELECT endpoint,p256dh,auth,hidden_modules FROM push_subscriptions WHERE group_id=? AND active=1 AND endpoint>? ORDER BY endpoint LIMIT ?",
+  ).bind(groupId, afterEndpoint, PUSH_SUBSCRIPTIONS_PER_JOB + 1).all();
+  const rows = res.results || [];
+  const subs = rows.slice(0, PUSH_SUBSCRIPTIONS_PER_JOB);
+  if (!subs.length) return { sent: 0, next_endpoint: null };
+  webpush.setVapidDetails(env.VAPID_SUBJECT, env.VAPID_PUBLIC_KEY, env.VAPID_PRIVATE_KEY);
+  let sent = 0;
+  for (const sub of subs) {
+    const hidden = new Set(parseHidden(sub.hidden_modules).map((x) => String(x).toLowerCase()));
+    const visible = changesList.filter((ch) => !hidden.has(String(ch.module || "").toLowerCase()));
+    if (!visible.length) continue;
+    const body = visible.length === 1 ? visible[0].body : `${visible.length} timetable changes. ${visible[0].body}`;
+    try {
+      await webpush.sendNotification(
+        { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
+        JSON.stringify({ title: "TUS timetable changed", body, url: "/?tab=changes", tag: `${groupId}:changes` }),
+        { TTL: 300 },
+      );
+      sent++;
+    } catch (err) {
+      const statusCode = Number(err?.statusCode || 0);
+      if (statusCode === 404 || statusCode === 410) await env.DB.prepare("UPDATE push_subscriptions SET active=0 WHERE endpoint=?").bind(sub.endpoint).run();
+      else console.error("push", groupId, statusCode || err?.message || err);
+    }
+  }
+  return { sent, next_endpoint: rows.length > PUSH_SUBSCRIPTIONS_PER_JOB ? subs.at(-1)?.endpoint || null : null };
+}
+
+async function markSyncing(env, groupId) {
+  const stamp = nowIso();
+  await env.DB.prepare(
+    "INSERT INTO sync_state(group_id,last_attempt_at,last_success_at,status,error) VALUES(?,?,?,?,?) " +
+    "ON CONFLICT(group_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,status=excluded.status,error=NULL",
+  ).bind(groupId, stamp, null, "syncing", null).run();
+}
+
+async function syncOneGroup(env, scientia, item) {
+  const groupId = String(item.group_id || ""), departmentId = String(item.department_id || "");
+  if (!groupId || !departmentId) throw new Error("invalid-group-job");
+  await markSyncing(env, groupId);
+  try {
+    const html = await scientia.fetchTimetable(departmentId, groupId);
+    const snapshot = parseTextSpreadsheet(html);
+    if (!snapshot.events.length) throw new Error("empty-timetable-response");
+    snapshot.group_id = groupId;
+    snapshot.department_id = departmentId;
+    const existing = await env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
+    const previous = safeParse(existing?.payload, null);
+    const changesList = diffSnapshots(previous, snapshot);
+    const enriched = await enrichChanges(groupId, changesList);
+    const payloadHash = await snapshotContentHash(snapshot);
+    const saved = await saveResultPayload(env, { group_id: groupId, snapshot, payload_hash: payloadHash, changes: enriched });
+    if (saved.inserted_changes.length) {
+      await env.SYNC_QUEUE.send({ type: "push-changes", group_id: groupId, changes: compactPushChanges(saved.inserted_changes), after_endpoint: "" });
+    }
+    return { group_id: groupId, events: snapshot.events.length, changes: saved.saved_changes };
+  } catch (err) {
+    await saveResultPayload(env, { group_id: groupId, error: String(err?.message || err) });
+    throw err;
+  }
+}
+
+async function runGroupJob(env, groups) {
+  const storage = await loadSourceStorageState(env);
+  const scientia = new ScientiaSession(storage);
+  const results = [];
+  let fatal = null;
+  for (const item of Array.isArray(groups) ? groups : []) {
+    try { results.push(await syncOneGroup(env, scientia, item)); }
+    catch (err) {
+      const message = String(err?.message || err);
+      console.error("group sync", item?.group_id, message);
+      if (/source-session/i.test(message)) { fatal = err; break; }
+      results.push({ group_id: item?.group_id, error: message });
+    }
+  }
+  await saveSourceStorageState(env, scientia.storageState());
+  if (fatal) {
+    await setMetaValue(env, "source_session_error", String(fatal.message || fatal));
+    throw fatal;
+  }
+  await setMetaValue(env, "source_session_error", "");
+  return results;
+}
+
+async function runCatalogJob(env) {
+  const storage = await loadSourceStorageState(env);
+  const scientia = new ScientiaSession(storage);
+  try {
+    const payload = await scientia.scrapeCatalog();
+    const summary = await saveCatalogPayload(env, payload);
+    await saveSourceStorageState(env, scientia.storageState());
+    return summary;
+  } catch (err) {
+    try { await saveSourceStorageState(env, scientia.storageState()); } catch {}
+    const message = String(err?.message || err);
+    if (/source-session/i.test(message)) await setMetaValue(env, "source_session_error", message);
+    throw err;
+  }
+}
+
+async function recordCycle(env, req) {
   const stamp = nowIso();
   const writes = [
     ["last_cycle_finished_at", String(req.finished_at || stamp)],
@@ -451,32 +605,67 @@ async function adminCycle(request, env) {
   await env.DB.batch(writes.map(([k, v]) => env.DB.prepare(
     "INSERT INTO meta(key,value,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at",
   ).bind(k, v, stamp)));
-  return json({ ok: true });
 }
 
-function mapResponse(roomCode, url) {
-  const departure = url.searchParams.get("departure");
-  const accessible = url.searchParams.get("accessible") === "true";
-  const q = new URL(`${MAP_URL}/directions`);
+async function enqueueScheduledWork(env) {
+  const started = nowIso();
+  let groupsQueued = 0, errors = 0;
+  try {
+    const sourceError = await getMetaValue(env, "source_session_error");
+    if (sourceError) {
+      errors = 1;
+      return;
+    }
+    const catalogAt = await getMetaValue(env, "catalog_updated_at");
+    const lastCatalogQueue = await getMetaValue(env, "catalog_last_enqueued_at");
+    const catalogDue = !catalogAt || ageMs(catalogAt) >= CATALOG_REFRESH_HOURS * 3600_000;
+    const catalogQueueDue = !lastCatalogQueue || ageMs(lastCatalogQueue) >= 30 * 60_000;
+    if (catalogDue && catalogQueueDue) {
+      await env.SYNC_QUEUE.send({ type: "catalog" });
+      await setMetaValue(env, "catalog_last_enqueued_at", nowIso());
+    }
+
+    const groups = await activeGroups(env);
+    const due = groups.filter((g) => {
+      if (["queued", "syncing"].includes(g.status) && ageMs(g.last_attempt_at) < QUEUED_STALE_MINUTES * 60_000) return false;
+      return !g.last_success_at || ageMs(g.last_success_at) >= GROUP_SYNC_MIN_SECONDS * 1000;
+    });
+    const warm = await preloadCandidates(env, PRELOAD_GROUPS_PER_CYCLE);
+    const activeSlots = Math.max(0, GROUPS_PER_QUEUE_JOB - warm.length);
+    const selected = [...due.slice(0, activeSlots), ...warm]
+      .filter((g, index, all) => all.findIndex((x) => x.group_id === g.group_id) === index)
+      .slice(0, GROUPS_PER_QUEUE_JOB);
+    const stamp = nowIso();
+    let queueMessages = 0;
+    for (let i = 0; i < selected.length && queueMessages < MAX_SCHEDULED_QUEUE_MESSAGES; i += GROUPS_PER_QUEUE_JOB) {
+      const batch = selected.slice(i, i + GROUPS_PER_QUEUE_JOB).map((g) => ({ group_id: g.group_id, department_id: g.department_id }));
+      if (!batch.length) continue;
+      await env.DB.batch(batch.map((g) => env.DB.prepare(
+        "INSERT INTO sync_state(group_id,last_attempt_at,last_success_at,status,error) VALUES(?,?,?,?,?) " +
+        "ON CONFLICT(group_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,status=excluded.status,error=NULL",
+      ).bind(g.group_id, stamp, null, "queued", null)));
+      await env.SYNC_QUEUE.send({ type: "groups", groups: batch });
+      groupsQueued += batch.length;
+      queueMessages++;
+    }
+  } catch (err) {
+    errors++;
+    console.error("scheduled enqueue", err);
+  } finally {
+    await recordCycle(env, { started_at: started, finished_at: nowIso(), groups: groupsQueued, errors, duration_seconds: 0 });
+  }
+}
+
+function mapResponse(roomCode) {
+  const q = new URL(MAP_URL);
   q.searchParams.set("location", roomCode);
-  if (departure) q.searchParams.set("departure", departure);
-  if (accessible) q.searchParams.set("accessible", "true");
-  return json({ location_url: `${MAP_URL}?location=${encodeURIComponent(roomCode)}`, directions_url: q.toString() });
+  return json({ location_url: q.toString(), directions_url: `${MAP_URL}/directions?location=${encodeURIComponent(roomCode)}` });
 }
 
 async function route(request, env) {
-  const url = new URL(request.url);
-  const path = url.pathname;
-
+  const url = new URL(request.url), path = url.pathname;
   if (path === "/health" && request.method === "GET") return health(env);
-  if (path === "/api/meta" && request.method === "GET") {
-    return json({
-      version: APP_VERSION,
-      operator_name: env.OPERATOR_NAME || "Independent TUS Companion project",
-      contact_email: env.CONTACT_EMAIL || "",
-      legal_version: LEGAL_VERSION,
-    });
-  }
+  if (path === "/api/meta" && request.method === "GET") return json({ version: APP_VERSION, operator_name: env.OPERATOR_NAME || "Independent TUS Companion project", contact_email: env.CONTACT_EMAIL || "", legal_version: LEGAL_VERSION });
   if (path === "/api/catalog" && request.method === "GET") return catalog(env);
   if (path === "/api/watch" && request.method === "POST") return publicWatch(request, env);
   if (path === "/api/push/public-key" && request.method === "GET") return json({ publicKey: env.VAPID_PUBLIC_KEY || null });
@@ -491,21 +680,21 @@ async function route(request, env) {
   match = path.match(/^\/api\/sync-status\/(.+)$/);
   if (match && request.method === "GET") return syncStatus(env, decodeURIComponent(match[1]));
   match = path.match(/^\/api\/map\/(.+)$/);
-  if (match && request.method === "GET") return mapResponse(decodeURIComponent(match[1]), url);
+  if (match && request.method === "GET") return mapResponse(decodeURIComponent(match[1]));
 
   if (path.startsWith("/api/admin/")) {
     if (!adminAuthorized(request, env)) return apiError(403, "admin-disabled-or-invalid-token");
-    if (path === "/api/admin/sync-plan" && request.method === "GET") return adminSyncPlan(env, url);
+    if (path === "/api/admin/sync-plan" && request.method === "GET") return adminSyncPlan(env);
     if (path === "/api/admin/catalog" && request.method === "POST") return adminCatalog(request, env);
     if (path === "/api/admin/result" && request.method === "POST") return adminResult(request, env);
     if (path === "/api/admin/source-session" && (request.method === "GET" || request.method === "PUT")) return adminSourceSession(request, env);
     if (path === "/api/admin/deactivate-subscription" && request.method === "POST") return adminDeactivateSubscription(request, env);
     if (path === "/api/admin/cycle" && request.method === "POST") return adminCycle(request, env);
+    if (path === "/api/admin/run-catalog" && request.method === "POST") { await env.SYNC_QUEUE.send({ type: "catalog" }); return json({ queued: true }); }
     match = path.match(/^\/api\/admin\/subscriptions\/(.+)$/);
     if (match && request.method === "GET") return adminSubscriptions(env, decodeURIComponent(match[1]));
     return apiError(404, "admin-route-not-found");
   }
-
   return apiError(404, "not-found");
 }
 
@@ -513,13 +702,44 @@ export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
-      if (url.pathname === "/health" || url.pathname.startsWith("/api/")) {
-        return securityHeaders(await route(request, env));
-      }
+      if (url.pathname === "/health" || url.pathname.startsWith("/api/")) return securityHeaders(await route(request, env));
       return securityHeaders(await env.ASSETS.fetch(request));
     } catch (err) {
       console.error(err);
       return securityHeaders(apiError(500, "internal-error"));
+    }
+  },
+
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(enqueueScheduledWork(env));
+  },
+
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      const body = message.body || {};
+      try {
+        if (body.type === "catalog") await runCatalogJob(env);
+        else if (body.type === "groups") await runGroupJob(env, body.groups || []);
+        else if (body.type === "push-test") await sendTestPush(env, String(body.endpoint || ""));
+        else if (body.type === "push-changes") {
+          const changesList = Array.isArray(body.changes) ? body.changes : [];
+          const result = await sendChangePushes(env, String(body.group_id || ""), changesList, String(body.after_endpoint || ""));
+          if (result.next_endpoint) {
+            await env.SYNC_QUEUE.send({ type: "push-changes", group_id: String(body.group_id || ""), changes: changesList, after_endpoint: result.next_endpoint });
+          }
+        }
+        else throw new Error("unknown-queue-job");
+        message.ack();
+      } catch (err) {
+        console.error("queue job", body.type, err);
+        const messageText = String(err?.message || err);
+        if (/source-session-expired|source-session-decryption|source-session-not-configured|source-session-key|source-session-invalid-json/i.test(messageText)) {
+          try { await setMetaValue(env, "source_session_error", messageText); } catch (metaErr) { console.error("source session meta", metaErr); }
+          message.retry({ delaySeconds: 300 });
+        } else {
+          message.retry({ delaySeconds: 90 });
+        }
+      }
     }
   },
 };
