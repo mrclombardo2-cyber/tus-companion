@@ -1,0 +1,26 @@
+name: Check TUS session bootstrap
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - ".github/workflows/check-session-bootstrap.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check bootstrap secret presence
+        env:
+          TUS_STORAGE_STATE_B64: ${{ secrets.TUS_STORAGE_STATE_B64 }}
+        shell: bash
+        run: |
+          if [ -n "$TUS_STORAGE_STATE_B64" ]; then
+            echo "TUS_STORAGE_STATE_B64_PRESENT=true"
+          else
+            echo "TUS_STORAGE_STATE_B64_PRESENT=false"
+          fi
