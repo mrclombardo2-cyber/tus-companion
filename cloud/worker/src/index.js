@@ -735,10 +735,6 @@ async function enqueueScheduledWork(env) {
       errors = 1;
       return;
     }
-    const reminderSubscriber = await env.DB.prepare(
-      "SELECT 1 AS ok FROM push_subscriptions WHERE active=1 AND reminder_minutes IN (15,30,60) LIMIT 1",
-    ).first();
-    if (reminderSubscriber) await env.SYNC_QUEUE.send({ type: "lesson-reminders", after_endpoint: "" });
     const catalogAt = await getMetaValue(env, "catalog_updated_at");
     const lastCatalogQueue = await getMetaValue(env, "catalog_last_enqueued_at");
     const catalogDue = !catalogAt || ageMs(catalogAt) >= CATALOG_REFRESH_HOURS * 3600_000;
@@ -771,6 +767,11 @@ async function enqueueScheduledWork(env) {
       groupsQueued += batch.length;
       queueMessages++;
     }
+
+    const reminderSubscriber = await env.DB.prepare(
+      "SELECT 1 AS ok FROM push_subscriptions WHERE active=1 AND reminder_minutes IN (15,30,60) LIMIT 1",
+    ).first();
+    if (reminderSubscriber) await env.SYNC_QUEUE.send({ type: "lesson-reminders", after_endpoint: "" });
   } catch (err) {
     errors++;
     console.error("scheduled enqueue", err);
