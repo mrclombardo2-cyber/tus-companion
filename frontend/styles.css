@@ -181,3 +181,6 @@ header>div:first-child{min-width:0}
   .reminder-card{width:100%}
   .reminder-segmented{width:100%;max-width:320px}
 }
+
+/* v15.4.3 notification status control */
+.small-primary:disabled{opacity:1;cursor:default}
