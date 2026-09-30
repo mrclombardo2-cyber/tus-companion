@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v15.2
+name: Deploy Cloudflare Worker v15.3
 
 on:
   workflow_dispatch:
@@ -73,7 +73,7 @@ jobs:
           )"
           echo "public_key=$pub" >> "$GITHUB_OUTPUT"
 
-      - name: Check v15.2 source
+      - name: Check v15.3 source
         shell: bash
         run: |
           set -euo pipefail
@@ -83,7 +83,7 @@ jobs:
           node --check frontend/app.js
           node --check frontend/sw.js
 
-      - name: Deploy v15.2 to Cloudflare
+      - name: Deploy v15.3 to Cloudflare
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -107,7 +107,7 @@ jobs:
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
 
-      - name: Verify live v15.2 and internal TUS collector
+      - name: Verify live v15.3 and internal TUS collector
         shell: bash
         env:
           CLOUD_ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
@@ -117,13 +117,13 @@ jobs:
 
           echo "Checking deployed Worker..."
           health="$(curl --fail --silent --show-error "$base/health")"
-          printf '%s\n' "$health" | jq -e '.status == "ok" and .version == "1.8.2-cloud"' >/dev/null
+          printf '%s\n' "$health" | jq -e '.status == "ok" and .version == "1.8.3-cloud"' >/dev/null
           before="$(printf '%s\n' "$health" | jq -r '.collector.catalog_updated_at // ""')"
 
           echo "Checking public catalog..."
           curl --fail --silent --show-error "$base/api/catalog" | jq -e '.departments | length > 0' >/dev/null
 
-          echo "Triggering one real TUS catalog refresh through the v15.2 Queue..."
+          echo "Triggering one real TUS catalog refresh through the v15.3 Queue..."
           curl --fail --silent --show-error -X POST             -H "x-admin-token: $CLOUD_ADMIN_TOKEN"             "$base/api/admin/run-catalog" | jq -e '.queued == true' >/dev/null
 
           ok=false
@@ -149,4 +149,4 @@ jobs:
             exit 1
           fi
 
-          echo "Cloudflare v15.2 live verification passed."
+          echo "Cloudflare v15.3 live verification passed."
