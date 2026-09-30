@@ -10,6 +10,7 @@ const LEGAL_VERSION='2026-09-30';
 const CLOUD_REFRESH_MS=30*1000;
 const PENDING_REFRESH_MS=15*1000;
 const UI_TIME_REFRESH_MS=15*1000;
+const CHANGES_RESET_AT='2026-09-30T11:58:00.000Z';
 
 const SUBJECT_PALETTE=[
   {bg:'#EAF3FB',border:'#B9D4E8',accent:'#5E91B7',ink:'#18384F',room:'#416F91'},
@@ -178,8 +179,9 @@ function renderWeek(){
   const desktop=`<div class="week-desktop"><div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div></div>`;
   return `<section class="week-section">${renderMobileWeek(events)}${desktop}</section>`;
 }
+function changeLabel(type){return ({ROOM_CHANGED:'Room changed',TIME_CHANGED:'Time changed',CLASS_ADDED:'Class added',CLASS_REMOVED:'Class removed',LECTURER_CHANGED:'Lecturer changed',CLASS_TYPE_CHANGED:'Class type changed',TEACHING_WEEKS_CHANGED:'Teaching weeks changed'})[type]||String(type||'Update').replaceAll('_',' ')}
 function renderChanges(){
-  return `<section>${state.changes.length?state.changes.map(c=>`<article class="change"><div class="change-type">${esc(c.change_type.replaceAll('_',' '))}</div><h3>${esc(c.module)}</h3><p>${esc(c.day)} · ${esc(formatDetected(c.detected_at))}</p>${c.change_type==='ROOM_CHANGED'?`<b>${esc(c.before?.room_code||c.before?.room_raw)} → ${esc(c.after?.room_code||c.after?.room_raw)}</b>`:''}${c.change_type==='TIME_CHANGED'?`<b>${esc(formatTime(c.before?.start))} → ${esc(formatTime(c.after?.start))}</b>`:''}${c.change_type==='LECTURER_CHANGED'?`<b>${esc(c.before?.staff||'?')} → ${esc(c.after?.staff||'?')}</b>`:''}${c.change_type==='CLASS_TYPE_CHANGED'?`<b>${esc(c.before?.type||'?')} → ${esc(c.after?.type||'?')}</b>`:''}${c.change_type==='TEACHING_WEEKS_CHANGED'?`<b>${esc(c.before?.weeks_raw||'?')} → ${esc(c.after?.weeks_raw||'?')}</b>`:''}</article>`).join(''):'<div class="empty">No timetable changes detected yet.</div>'}</section>`;
+  return `<section>${state.changes.length?state.changes.map(c=>`<article class="change"><div class="change-type">${esc(changeLabel(c.change_type))}</div><h3>${esc(c.module)}</h3><p>${esc(c.day)} · ${esc(formatDetected(c.detected_at))}</p>${c.change_type==='ROOM_CHANGED'?`<b>${esc(c.before?.room_code||c.before?.room_raw)} → ${esc(c.after?.room_code||c.after?.room_raw)}</b>`:''}${c.change_type==='TIME_CHANGED'?`<b>${esc(formatTime(c.before?.start))} → ${esc(formatTime(c.after?.start))}</b>`:''}${c.change_type==='LECTURER_CHANGED'?`<b>${esc(c.before?.staff||'?')} → ${esc(c.after?.staff||'?')}</b>`:''}${c.change_type==='CLASS_TYPE_CHANGED'?`<b>${esc(c.before?.type||'?')} → ${esc(c.after?.type||'?')}</b>`:''}${c.change_type==='TEACHING_WEEKS_CHANGED'?`<b>${esc(c.before?.weeks_raw||'?')} → ${esc(c.after?.weeks_raw||'?')}</b>`:''}</article>`).join(''):'<div class="empty">No new timetable changes.</div>'}</section>`;
 }
 function pushStatusText(){if(!state.push.supported)return 'Not supported in this browser';if(state.push.permission==='denied')return 'Blocked by browser settings';if(state.push.subscribed)return 'Enabled on this device';return 'Off on this device'}
 function installSummary(){const d=deviceInfo();if(d.standalone)return 'Installed on this device';if(d.ios)return 'Add to Home Screen from Safari';if(d.android)return deferredInstallPrompt?'Ready to install':'Install from your browser menu';return deferredInstallPrompt?'Ready to install':'Use the install icon in Chrome/Edge'}
@@ -245,7 +247,7 @@ async function watchAndLoad(forceWatch=false){
     if(w?.sync)state.sync=w.sync;
     try{
       const t=await api('/api/timetable/'+encodeURIComponent(state.selection.group));state.snapshot=t.snapshot;state.sync=t.sync||state.sync;
-      try{state.changes=await api('/api/changes/'+encodeURIComponent(state.selection.group))}catch{}
+      try{const allChanges=await api('/api/changes/'+encodeURIComponent(state.selection.group));state.changes=(Array.isArray(allChanges)?allChanges:[]).filter(c=>!c?.detected_at||String(c.detected_at)>CHANGES_RESET_AT)}catch{}
       state.error='';
     }catch(e){
       if(e instanceof ApiError&&e.status===404&&e.detail==='not-synced-yet'){state.snapshot=null;try{state.sync=await api('/api/sync-status/'+encodeURIComponent(state.selection.group))}catch{}state.error=''}
@@ -257,6 +259,7 @@ async function watchAndLoad(forceWatch=false){
 
 async function refreshLoop(){if(state.selection){await watchAndLoad(false);await refreshPushStatus();render()}setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS)}
 async function init(){
+  const di=deviceInfo();document.documentElement.classList.toggle('ios-standalone',di.ios&&di.standalone);
   try{const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta').catch(()=>null)]);state.catalog=c.departments||[];state.meta=m;if(!state.catalog.length)state.error='Course catalogue is still being prepared. Try again in a few minutes.'}catch{state.error='Could not load the course catalogue from the service.'}
   if('serviceWorker'in navigator){
     try{
