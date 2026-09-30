@@ -2,6 +2,7 @@ name: Deploy Cloudflare Worker
 
 # Deploys current main to Cloudflare.
 # Secrets configured; trigger deploy
+# Worker token scope updated; trigger deploy
 
 on:
   workflow_dispatch:
