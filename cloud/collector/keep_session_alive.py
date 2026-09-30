@@ -104,8 +104,33 @@ def main() -> int:
         print("[session-keeper] TUS/Microsoft session renewed and re-uploaded")
 
         if source_error_before:
+            previous_catalog = (health_before.get("collector") or {}).get("catalog_updated_at")
             cloud_request(client, "POST", base, token, "/api/admin/run-catalog", json={})
             print("[session-keeper] recovery verification queued")
+
+            # Old queue jobs can finish after the new session is uploaded and
+            # briefly write source-session-expired again. Re-assert the renewed
+            # encrypted state while waiting for a fresh catalogue confirmation.
+            deadline = __import__("time").monotonic() + 90
+            reassertions = 0
+            while __import__("time").monotonic() < deadline:
+                __import__("time").sleep(5)
+                health = client.get(base + "/health", params={"keeper_verify": __import__("time").time_ns()}).json()
+                collector = health.get("collector") or {}
+                source_error = collector.get("source_session_error")
+                catalog_at = collector.get("catalog_updated_at")
+
+                if not source_error and catalog_at and catalog_at != previous_catalog:
+                    print(f"[session-keeper] cloud recovery verified at {catalog_at}")
+                    return 0
+
+                if source_error and reassertions < 3:
+                    upload_cloud_session(client, base, token, key)
+                    reassertions += 1
+                    print(f"[session-keeper] cleared stale queue error ({reassertions}/3)")
+                    cloud_request(client, "POST", base, token, "/api/admin/run-catalog", json={})
+
+            raise RuntimeError("silent-renewal-succeeded-but-cloud-recovery-not-confirmed")
 
     return 0
 
