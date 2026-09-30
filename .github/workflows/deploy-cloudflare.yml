@@ -1,9 +1,4 @@
-name: Deploy Cloudflare Worker
-
-# Deploys current main to Cloudflare.
-# Secrets configured; trigger deploy
-# Worker token scope updated; trigger deploy
-# New Cloudflare deploy token installed; trigger deploy
+name: Deploy Cloudflare Worker v15.1
 
 on:
   workflow_dispatch:
@@ -20,18 +15,24 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - name: Check Cloudflare token
+      - name: Check Cloudflare and persistent app secrets
         shell: bash
         env:
-          HAS_CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUD_ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
+          SESSION_CIPHER_KEY_B64: ${{ secrets.SESSION_CIPHER_KEY_B64 }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
         run: |
-          echo "CLOUDFLARE_API_TOKEN configured: $HAS_CF_TOKEN"
-          if [ "$HAS_CF_TOKEN" != "true" ]; then
-            echo "Missing CLOUDFLARE_API_TOKEN repository secret."
-            exit 1
-          fi
+          set -euo pipefail
+          for name in CLOUDFLARE_API_TOKEN CLOUD_ADMIN_TOKEN SESSION_CIPHER_KEY_B64 VAPID_PRIVATE_KEY VAPID_SUBJECT; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required repository secret: $name"
+              exit 1
+            fi
+          done
 
       - name: Resolve Cloudflare account automatically
         id: cf-account
@@ -52,10 +53,59 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Deploy to Cloudflare
+      - name: Derive VAPID public key from existing private key
+        id: vapid
+        shell: bash
+        env:
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          pub="$(node - <<'NODE'
+          const crypto = require('crypto');
+          const raw = process.env.VAPID_PRIVATE_KEY || '';
+          const pad = '='.repeat((4 - raw.length % 4) % 4);
+          const priv = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/') + pad, 'base64');
+          if (priv.length !== 32) throw new Error('Invalid VAPID private key');
+          const ecdh = crypto.createECDH('prime256v1');
+          ecdh.setPrivateKey(priv);
+          process.stdout.write(ecdh.getPublicKey().toString('base64url'));
+          NODE
+          )"
+          echo "public_key=$pub" >> "$GITHUB_OUTPUT"
+
+      - name: Check v15.1 source
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check cloud/worker/src/index.js
+          node --check cloud/worker/src/scientia.js
+          node --check cloud/worker/src/timetable.js
+          node --check frontend/app.js
+          node --check frontend/sw.js
+
+      - name: Deploy v15.1 to Cloudflare
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ steps.cf-account.outputs.account_id }}
           workingDirectory: cloud/worker
+          wranglerVersion: "4.143.0"
+          secrets: |
+            ADMIN_TOKEN
+            SESSION_CIPHER_KEY_B64
+            VAPID_PUBLIC_KEY
+            VAPID_PRIVATE_KEY
+            VAPID_SUBJECT
+          preCommands: |
+            npm install --ignore-scripts
+            if ! wrangler queues info tus-companion-sync >/dev/null 2>&1; then
+              wrangler queues create tus-companion-sync
+            fi
+            wrangler d1 migrations apply tus-companion-db --remote
           command: deploy
+        env:
+          ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
+          SESSION_CIPHER_KEY_B64: ${{ secrets.SESSION_CIPHER_KEY_B64 }}
+          VAPID_PUBLIC_KEY: ${{ steps.vapid.outputs.public_key }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
