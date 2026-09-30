@@ -4,12 +4,6 @@ on:
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
-  push:
-    branches: ["main"]
-    paths:
-      - ".github/workflows/prewarm.yml"
-      - "cloud/collector/**"
-      - "cloud/worker/**"
 
 permissions:
   contents: read
