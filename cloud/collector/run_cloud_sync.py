@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import base64
 import hashlib
 import json
@@ -124,6 +125,15 @@ class CloudApi:
     def cycle(self, payload: dict):
         return self._request("POST", "/api/admin/cycle", json=payload)
 
+    def run_catalog(self):
+        return self._request("POST", "/api/admin/run-catalog", json={})
+
+    def health(self):
+        r = self.client.get(self.base_url + "/health", headers={"user-agent": "tus-companion-admin-reconnect/1.0"})
+        if r.status_code >= 400:
+            raise RuntimeError(f"cloud health: {r.status_code} {r.text[:400]}")
+        return r.json()
+
 
 def restore_source_session(api: CloudApi, cipher_key: bytes, bootstrap_b64: str | None) -> str:
     SESSION_STATE.parent.mkdir(parents=True, exist_ok=True)
@@ -158,6 +168,40 @@ def persist_source_session(api: CloudApi, cipher_key: bytes) -> None:
     nonce = os.urandom(12)
     ciphertext = AESGCM(cipher_key).encrypt(nonce, plaintext, AAD)
     api.put_source_session(b64url(ciphertext), b64url(nonce))
+
+
+def upload_local_session_and_verify(api: CloudApi, cipher_key: bytes) -> None:
+    if not SESSION_STATE.exists():
+        raise RuntimeError(f"no-local-session: {SESSION_STATE}")
+
+    before = api.health()
+    previous_catalog = (before.get("collector") or {}).get("catalog_updated_at")
+
+    persist_source_session(api, cipher_key)
+    print("[reconnect] encrypted TUS session uploaded to Cloudflare")
+
+    api.run_catalog()
+    print("[reconnect] verification catalogue sync queued")
+
+    deadline = time.monotonic() + 120
+    last_health = None
+    while time.monotonic() < deadline:
+        time.sleep(4)
+        health = api.health()
+        last_health = health
+        collector = health.get("collector") or {}
+        source_error = collector.get("source_session_error")
+        catalog_at = collector.get("catalog_updated_at")
+        if source_error:
+            raise RuntimeError(f"reconnect-verification-failed: {source_error}")
+        if catalog_at and catalog_at != previous_catalog:
+            print(f"[reconnect] verified: catalogue refreshed at {catalog_at}")
+            return
+
+    raise RuntimeError(
+        "reconnect-verification-timeout: session upload completed but a fresh catalogue "
+        f"sync was not confirmed within 120 seconds; last health={last_health}"
+    )
 
 
 def canonical_hash(payload: dict) -> str:
@@ -282,6 +326,14 @@ def process_group(api: CloudApi, item: dict, html: str, vapid_private: str, vapi
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(add_help=True)
+    parser.add_argument(
+        "--upload-local-session",
+        action="store_true",
+        help="Encrypt the local Playwright storage state, upload it to Cloudflare, and verify a fresh TUS catalogue sync.",
+    )
+    args = parser.parse_args()
+
     base_url = os.environ.get("CLOUD_API_URL", "").strip()
     admin_token = os.environ.get("CLOUD_ADMIN_TOKEN", "").strip()
     cipher_key_raw = os.environ.get("SESSION_CIPHER_KEY_B64", "").strip()
@@ -305,6 +357,16 @@ def main() -> int:
     errors = 0
     group_count = 0
     api = CloudApi(base_url, admin_token)
+
+    if args.upload_local_session:
+        try:
+            upload_local_session_and_verify(api, cipher_key)
+            return 0
+        except Exception as exc:
+            print(f"[reconnect] ERROR {exc}")
+            return 1
+        finally:
+            api.close()
 
     try:
         session_source = restore_source_session(api, cipher_key, bootstrap)
