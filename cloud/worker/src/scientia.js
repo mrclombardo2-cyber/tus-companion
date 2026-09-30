@@ -192,9 +192,9 @@ async function readText(response) {
 }
 
 export class ScientiaSession {
-  constructor(storageState, fetchImpl = fetch) {
+  constructor(storageState, fetchImpl = null) {
     this.cookies = new CookieJar(storageState);
-    this.fetchImpl = fetchImpl;
+    this.fetchImpl = fetchImpl || ((input, init) => fetch(input, init));
   }
 
   async request(url, init = {}, redirects = 0) {
