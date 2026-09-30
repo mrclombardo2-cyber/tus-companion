@@ -20,18 +20,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Check Cloudflare secrets
+      - name: Check Cloudflare token
         shell: bash
         env:
           HAS_CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
-          HAS_CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID != '' }}
         run: |
           echo "CLOUDFLARE_API_TOKEN configured: $HAS_CF_TOKEN"
-          echo "CLOUDFLARE_ACCOUNT_ID configured: $HAS_CF_ACCOUNT"
-          if [ "$HAS_CF_TOKEN" != "true" ] || [ "$HAS_CF_ACCOUNT" != "true" ]; then
-            echo "Missing required GitHub Actions repository secret."
+          if [ "$HAS_CF_TOKEN" != "true" ]; then
+            echo "Missing CLOUDFLARE_API_TOKEN repository secret."
             exit 1
           fi
+
+      - name: Resolve Cloudflare account automatically
+        id: cf-account
+        shell: bash
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          json="$(curl --fail --silent --show-error             -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"             -H "Content-Type: application/json"             https://api.cloudflare.com/client/v4/accounts)"
+          account_id="$(printf '%s' "$json" | jq -r '.result[0].id // empty')"
+          if [ -z "$account_id" ]; then
+            echo "The token cannot resolve an accessible Cloudflare account."
+            exit 1
+          fi
+          echo "::add-mask::$account_id"
+          echo "account_id=$account_id" >> "$GITHUB_OUTPUT"
 
       - name: Checkout
         uses: actions/checkout@v6
@@ -40,6 +54,6 @@ jobs:
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          accountId: ${{ steps.cf-account.outputs.account_id }}
           workingDirectory: cloud/worker
           command: deploy
