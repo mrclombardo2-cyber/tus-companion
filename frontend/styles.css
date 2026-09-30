@@ -178,3 +178,11 @@ html,body{max-width:100%;overflow-x:hidden}
   .map-picker-footer{grid-template-columns:1fr}
   .map-picker-footer .small-primary{width:100%;min-height:48px}
 }
+
+/* v14.4 mappedin touch reliability */
+.map-picker-frame,.map-picker-frame iframe{touch-action:manipulation;pointer-events:auto}
+.map-picker-frame iframe{position:relative;z-index:1}
+.map-picker-footer{position:relative;z-index:2}
+@media(max-width:520px){
+  .map-picker-frame{overscroll-behavior:contain}
+}

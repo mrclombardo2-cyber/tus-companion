@@ -2,7 +2,7 @@ name: Preload uncached timetables
 
 on:
   schedule:
-    - cron: "1 * * * *"
+    - cron: "17 3 * * *"
   workflow_dispatch:
   push:
     branches: ["main"]

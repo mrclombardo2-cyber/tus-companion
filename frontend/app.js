@@ -9,7 +9,7 @@ const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunda
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const MAPPEDIN_ORIGIN='https://app.mappedin.com';
 const LEGAL_VERSION='2026-09-29';
-const CLOUD_REFRESH_MS=30*1000;
+const CLOUD_REFRESH_MS=15*1000;
 const PENDING_REFRESH_MS=2500;
 const PENDING_KEY='tus-companion-pending-v1';
 
@@ -125,6 +125,7 @@ function setup(){
     const d=state.catalog.find(x=>x.id===dep.value);const g=d?.groups?.find(x=>x.id===grp.value);
     state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};
     localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);
+    state.tab='today';history.replaceState(null,'','/');
     state.snapshot=null;state.changes=[];state.error='';state.sync={status:'queued'};ensurePendingSince(true);
     await updateExistingSubscription();render();await watchAndLoad(true);render();
   };
@@ -258,7 +259,7 @@ function bindCommon(){
   const change=document.getElementById('change');if(change)change.onclick=changeCourse;
 }
 
-function changeCourse(){localStorage.removeItem(STORE);state.selection=null;state.snapshot=null;state.changes=[];state.sync=null;state.error='';render()}
+function changeCourse(){localStorage.removeItem(STORE);state.selection=null;state.snapshot=null;state.changes=[];state.sync=null;state.error='';state.tab='today';history.replaceState(null,'','/');render()}
 function toast(message){state.toast=message;render();setTimeout(()=>{if(state.toast===message){state.toast='';render()}},2800)}
 function deviceInfo(){const ua=navigator.userAgent||'',ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1),android=/Android/i.test(ua),standalone=window.matchMedia?.('(display-mode: standalone)').matches||window.navigator.standalone===true;if(standalone)try{localStorage.setItem(INSTALL_DONE,'1')}catch{}return {ios,android,desktop:!ios&&!android,standalone}}
 function shouldAutoOfferInstall(){const d=deviceInfo();if(d.standalone||localStorage.getItem(INSTALL_DONE)==='1')return false;const last=Number(localStorage.getItem(INSTALL_DISMISSED)||0);return !last||Date.now()-last>14*24*60*60*1000}
@@ -339,8 +340,8 @@ function renderOriginEditor(){
   return `<div class="modal-backdrop"><section class="modal origin-modal simple-origin" role="dialog" aria-modal="true"><button class="modal-x" data-close-origin aria-label="Close">×</button><p class="kicker">MY USUAL START</p><h2>Where do you normally enter?</h2><p class="short-copy">Choose once. You can change it anytime.</p><button id="open-map-origin" class="map-origin-primary"><span class="map-person" aria-hidden="true"></span><span><b>Choose on campus map</b><small>Tap your usual entrance or starting point in Mappedin</small></span><span class="map-origin-arrow" aria-hidden="true">›</span></button><div class="simple-divider"><span>or choose a quick option</span></div><div class="preset-starts">${CAMPUS_STARTS.map(x=>`<button class="preset-start ${saved.value===x.value?'selected':''}" data-preset-origin="${esc(x.value)}"><b>${esc(x.label)}</b><small>${esc(x.hint)}</small></button>`).join('')}</div><div class="simple-divider"><span>or</span></div><label class="simple-select-label">A classroom<select id="origin-room"><option value="">Choose room…</option>${rooms.map(x=>`<option value="${esc(x)}">${esc(x)}</option>`).join('')}</select></label><button id="save-origin" class="small-primary wide">Save classroom</button><details class="advanced-origin"><summary>Another place</summary><div class="advanced-origin-body"><input id="origin-custom-simple" placeholder="Mappedin place or link"/><button id="save-origin-custom" class="small-ghost wide">Save this place</button></div></details>${saved.value?'<button id="clear-origin" class="text-button danger-text">Remove saved start</button>':''}</section></div>`;
 }
 function renderMapOriginPicker(){
-  const src=`${MAP}?embedded=true&camera-mode=pan-only`;
-  return `<div class="modal-backdrop map-picker-backdrop"><section class="modal map-picker-modal" role="dialog" aria-modal="true"><button class="modal-x" data-close-map-origin aria-label="Close">×</button><p class="kicker">CHOOSE ON MAP</p><h2>Set your usual start</h2><p class="map-picker-copy">Tap the entrance or mapped place you normally start from. We save it only on this device.</p><div class="map-picker-frame"><iframe id="mappedin-origin-map" title="TUS Athlone campus map" src="${esc(src)}" allow="geolocation https://app.mappedin.com; clipboard-write; web-share" scrolling="no"></iframe></div><div class="map-picker-footer"><p id="map-origin-choice">Tap your usual entrance or starting place on the map.</p><button id="save-map-origin" class="small-primary" disabled>Save this start</button></div></section></div>`;
+  const src=`${MAP}?embedded=true`;
+  return `<div class="modal-backdrop map-picker-backdrop"><section class="modal map-picker-modal" role="dialog" aria-modal="true"><button class="modal-x" data-close-map-origin aria-label="Close">×</button><p class="kicker">CHOOSE ON MAP</p><h2>Set your usual start</h2><p class="map-picker-copy">Tap a labelled entrance, room, or mapped place. Empty floor areas are not selectable in the public Mappedin viewer. We save the selected place only on this device.</p><div class="map-picker-frame"><iframe id="mappedin-origin-map" title="TUS Athlone campus map" src="${esc(src)}" allow="geolocation https://app.mappedin.com; clipboard-write; web-share" scrolling="no"></iframe></div><div class="map-picker-footer"><p id="map-origin-choice">Loading interactive campus map…</p><button id="save-map-origin" class="small-primary" disabled>Save this start</button></div></section></div>`;
 }
 
 async function refreshPushStatus(){
@@ -381,14 +382,24 @@ async function refreshLoop(){if(state.selection){await watchAndLoad(false);await
 window.addEventListener('message',event=>{
   if(event.origin!==MAPPEDIN_ORIGIN||!state.mapPicker)return;
   const data=event.data;
-  if(!data||data.type!=='state-changed'||!data.payload)return;
+  if(!data)return;
+  if(data.type==='app-loaded'){
+    const label=document.getElementById('map-origin-choice');
+    if(label)label.textContent='Tap a labelled entrance, room, or mapped place.';
+    return;
+  }
+  if(data.type!=='state-changed'||!data.payload)return;
   const payload=data.payload;
   const departure=Array.isArray(payload.departure)?payload.departure[0]:null;
   const location=Array.isArray(payload.location)?payload.location[0]:null;
   const value=departure||location;
-  if(!value)return;
-  state.mapPick={value:String(value),floor:payload.floor||null};
-  updateMapOriginCandidate();
+  if(value){
+    state.mapPick={value:String(value),floor:payload.floor||null};
+    updateMapOriginCandidate();
+    return;
+  }
+  const label=document.getElementById('map-origin-choice');
+  if(label&&payload.floor)label.textContent='Floor selected. Now tap a labelled entrance, room, or mapped place.';
 });
 
 async function init(){
