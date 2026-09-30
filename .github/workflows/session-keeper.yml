@@ -1,0 +1,62 @@
+name: Keep TUS source session alive
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/10 * * * *"
+  push:
+    branches: ["main"]
+    paths:
+      - "cloud/collector/keep_session_alive.py"
+      - ".github/workflows/session-keeper.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tus-source-session-keeper
+  cancel-in-progress: true
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUD_API_URL: https://tus-companion.tusathlone.workers.dev
+      CLOUD_ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
+      SESSION_CIPHER_KEY_B64: ${{ secrets.SESSION_CIPHER_KEY_B64 }}
+
+    steps:
+      - name: Check required secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLOUD_ADMIN_TOKEN SESSION_CIPHER_KEY_B64; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required repository secret: $name"
+              exit 1
+            fi
+          done
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install keepalive dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check             playwright==1.49.1             cryptography==44.0.0             httpx==0.28.1             beautifulsoup4==4.14.3
+          python -m playwright install --with-deps chromium
+
+      - name: Renew TUS/Microsoft session silently
+        shell: bash
+        run: |
+          set -euo pipefail
+          python cloud/collector/keep_session_alive.py
