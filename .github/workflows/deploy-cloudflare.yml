@@ -99,7 +99,6 @@ jobs:
           preCommands: |
             npm install --ignore-scripts
             wrangler queues info tus-companion-sync >/dev/null 2>&1 || wrangler queues create tus-companion-sync
-            wrangler d1 migrations apply tus-companion-db --remote
           command: deploy
         env:
           ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
