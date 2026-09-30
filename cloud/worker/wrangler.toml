@@ -1,6 +1,7 @@
 name = "tus-companion"
 main = "src/index.js"
-compatibility_date = "2026-09-29"
+compatibility_date = "2026-09-30"
+compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
 [assets]
@@ -9,12 +10,24 @@ binding = "ASSETS"
 not_found_handling = "single-page-application"
 run_worker_first = ["/api/*", "/health"]
 
+[triggers]
+crons = ["* * * * *"]
+
+[[queues.producers]]
+binding = "SYNC_QUEUE"
+queue = "tus-companion-sync"
+
+[[queues.consumers]]
+queue = "tus-companion-sync"
+max_batch_size = 1
+max_batch_timeout = 1
+max_retries = 5
+max_concurrency = 1
+retry_delay = 90
+
 [vars]
 OPERATOR_NAME = "Independent TUS Companion project"
 CONTACT_EMAIL = ""
-
-# The D1 binding is added automatically by GO-LIVE.ps1 using:
-# wrangler d1 create tus-companion-db --binding DB --update-config
 
 [[d1_databases]]
 binding = "DB"
