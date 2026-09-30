@@ -2,7 +2,7 @@ import webpush from "web-push";
 import { ScientiaSession } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
-const APP_VERSION = "1.8.1-cloud";
+const APP_VERSION = "1.8.2-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -469,24 +469,33 @@ async function saveSourceStorageState(env, state) {
   ).bind(bytesB64(new Uint8Array(encrypted)), bytesB64(nonce), nowIso()).run();
 }
 
-function notificationBody(ch) {
+function pushChangeSummary(ch) {
   const a = ch.after || {}, b = ch.before || {};
-  const name = ch.module || ch.activity || "Class";
-  if (ch.change_type === "ROOM_CHANGED") return `${name}: ${b.room_code || b.room_raw || "?"} → ${a.room_code || a.room_raw || "?"}`;
-  if (ch.change_type === "TIME_CHANGED") return `${name}: ${b.start || "?"} → ${a.start || "?"}`;
-  if (ch.change_type === "CLASS_ADDED") return `New class: ${name} ${a.start || ""}`.trim();
-  if (ch.change_type === "CLASS_REMOVED") return `Class removed: ${name} ${b.start || ""}`.trim();
-  if (ch.change_type === "LECTURER_CHANGED") return `${name}: lecturer changed`;
-  if (ch.change_type === "CLASS_TYPE_CHANGED") return `${name}: ${b.type || "?"} → ${a.type || "?"}`;
-  if (ch.change_type === "TEACHING_WEEKS_CHANGED") return `${name}: teaching weeks changed`;
-  return name;
+  const name = String(ch.module || ch.activity || "Class").trim();
+  const day = String(ch.day || a.day || b.day || "").trim().slice(0, 3);
+  const at = a.start || b.start || "";
+  const roomA = a.room_code || a.room_raw || "";
+  const roomB = b.room_code || b.room_raw || "";
+  const join = (...parts) => parts.filter(Boolean).join(" · ");
+  if (ch.change_type === "ROOM_CHANGED") return { module: name, title: `${name} · room changed`, body: join(roomB && roomA ? `${roomB} → ${roomA}` : "", day, at) };
+  if (ch.change_type === "TIME_CHANGED") return { module: name, title: `${name} · time changed`, body: join(day, b.start && a.start ? `${b.start} → ${a.start}` : at) };
+  if (ch.change_type === "CLASS_ADDED") return { module: name, title: `${name} · class added`, body: join(day, a.start, roomA) };
+  if (ch.change_type === "CLASS_REMOVED") return { module: name, title: `${name} · class removed`, body: join(day, b.start, roomB) };
+  if (ch.change_type === "LECTURER_CHANGED") return { module: name, title: `${name} · lecturer changed`, body: b.staff && a.staff ? `${b.staff} → ${a.staff}` : "" };
+  if (ch.change_type === "CLASS_TYPE_CHANGED") return { module: name, title: `${name} · class type changed`, body: b.type && a.type ? `${b.type} → ${a.type}` : "" };
+  if (ch.change_type === "TEACHING_WEEKS_CHANGED") return { module: name, title: `${name} · teaching weeks changed`, body: "" };
+  return { module: name, title: name, body: join(day, at, roomA) };
 }
 
 function compactPushChanges(changesList) {
-  return (Array.isArray(changesList) ? changesList : []).slice(0, 80).map((ch) => ({
-    module: ch?.module == null ? "" : String(ch.module).slice(0, 256),
-    body: notificationBody(ch).slice(0, 420),
-  }));
+  return (Array.isArray(changesList) ? changesList : []).slice(0, 80).map((ch) => {
+    const summary = pushChangeSummary(ch);
+    return {
+      module: summary.module.slice(0, 256),
+      title: summary.title.slice(0, 180),
+      body: summary.body.slice(0, 240),
+    };
+  });
 }
 
 async function sendChangePushes(env, groupId, changesList, afterEndpoint = "") {
@@ -503,11 +512,14 @@ async function sendChangePushes(env, groupId, changesList, afterEndpoint = "") {
     const hidden = new Set(parseHidden(sub.hidden_modules).map((x) => String(x).toLowerCase()));
     const visible = changesList.filter((ch) => !hidden.has(String(ch.module || "").toLowerCase()));
     if (!visible.length) continue;
-    const body = visible.length === 1 ? visible[0].body : `${visible.length} timetable changes. ${visible[0].body}`;
+    const first = visible[0];
+    const title = visible.length === 1 ? first.title : `${visible.length} timetable changes`;
+    const firstSummary = [first.title, first.body].filter(Boolean).join(" · ");
+    const body = visible.length === 1 ? first.body : `${firstSummary} · +${visible.length - 1} more`;
     try {
       await webpush.sendNotification(
         { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
-        JSON.stringify({ title: "TUS timetable changed", body, url: "/?tab=changes", tag: `${groupId}:changes` }),
+        JSON.stringify({ title, body, url: "/?tab=changes", tag: `${groupId}:changes` }),
         { TTL: 300 },
       );
       sent++;
