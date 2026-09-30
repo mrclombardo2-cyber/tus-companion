@@ -297,8 +297,20 @@ try {
     Write-Host "Worker online: $cloudUrl" -ForegroundColor Green
 
     Step "Encrypt and publish the TUS source session"
-    & $Python (Join-Path $Root "cloud\tools\upload_session.py")
-    if ($LASTEXITCODE -ne 0) { throw "Encrypted TUS source-session upload failed." }
+    $oldApi = $env:CLOUD_API_URL
+    $oldAdmin = $env:CLOUD_ADMIN_TOKEN
+    $oldCipher = $env:SESSION_CIPHER_KEY_B64
+    try {
+        $env:CLOUD_API_URL = $cloudUrl
+        $env:CLOUD_ADMIN_TOKEN = [string]$cloud['cloud_admin_token']
+        $env:SESSION_CIPHER_KEY_B64 = [string]$cloud['session_cipher_key_b64']
+        & $Python (Join-Path $Root "cloud\collector\run_cloud_sync.py") --upload-local-session
+        if ($LASTEXITCODE -ne 0) { throw "Encrypted TUS source-session upload/verification failed." }
+    } finally {
+        $env:CLOUD_API_URL = $oldApi
+        $env:CLOUD_ADMIN_TOKEN = $oldAdmin
+        $env:SESSION_CIPHER_KEY_B64 = $oldCipher
+    }
 
     Step "GitHub login"
     & $script:Gh auth status *> $null
