@@ -53,6 +53,35 @@ function parseHidden(value) {
   return Array.isArray(parsed) ? parsed : [];
 }
 
+let reminderSchemaReady = false;
+let reminderSchemaPromise = null;
+
+async function ensureReminderSchema(env) {
+  if (reminderSchemaReady) return;
+  if (reminderSchemaPromise) return reminderSchemaPromise;
+  reminderSchemaPromise = (async () => {
+    try {
+      await env.DB.prepare("ALTER TABLE push_subscriptions ADD COLUMN reminder_minutes INTEGER NOT NULL DEFAULT 0").run();
+    } catch (err) {
+      const message = String(err?.message || err);
+      if (!/duplicate column|already exists/i.test(message)) throw err;
+    }
+    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_push_reminders ON push_subscriptions(active, reminder_minutes)").run();
+    await env.DB.prepare(
+      "CREATE TABLE IF NOT EXISTS reminder_deliveries(" +
+      "endpoint TEXT NOT NULL,event_key TEXT NOT NULL,lead_minutes INTEGER NOT NULL,sent_at TEXT NOT NULL," +
+      "PRIMARY KEY(endpoint,event_key,lead_minutes))",
+    ).run();
+    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_reminder_deliveries_sent ON reminder_deliveries(sent_at)").run();
+    reminderSchemaReady = true;
+  })();
+  try {
+    await reminderSchemaPromise;
+  } finally {
+    if (!reminderSchemaReady) reminderSchemaPromise = null;
+  }
+}
+
 function securityHeaders(response) {
   const h = new Headers(response.headers);
   h.set("X-Content-Type-Options", "nosniff");
@@ -825,6 +854,7 @@ async function route(request, env) {
 export default {
   async fetch(request, env) {
     try {
+      await ensureReminderSchema(env);
       const url = new URL(request.url);
       if (url.pathname === "/health" || url.pathname.startsWith("/api/")) return securityHeaders(await route(request, env));
       return securityHeaders(await env.ASSETS.fetch(request));
@@ -835,10 +865,11 @@ export default {
   },
 
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(enqueueScheduledWork(env));
+    ctx.waitUntil(ensureReminderSchema(env).then(() => enqueueScheduledWork(env)));
   },
 
   async queue(batch, env) {
+    await ensureReminderSchema(env);
     for (const message of batch.messages) {
       const body = message.body || {};
       try {
