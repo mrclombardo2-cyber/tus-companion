@@ -94,7 +94,14 @@ function nextClassContext(e){
   if(e.date===isoToday()||e.day===dayName())return 'TODAY';
   return eventWeekday(e);
 }
-function syncDisplay(){const last=state.sync?.last_success_at;if(!last)return {updated:state.sync?.status==='syncing'?'Updating…':''};return {updated:`Updated ${formatClockDate(last)}`}}
+function syncDisplay(){
+  const last=state.sync?.last_success_at,status=state.sync?.status;
+  if(!last)return {updated:status==='syncing'?'Updating…':status==='error'?'Sync delayed':''};
+  const age=Date.now()-new Date(last).getTime();
+  if(status==='error'||age>5*60*1000)return {updated:`Sync delayed · ${formatClockDate(last)}`};
+  if(status==='syncing')return {updated:`Updating · ${formatClockDate(last)}`};
+  return {updated:`Synced ${formatClockDate(last)}`};
+}
 function mapButton(e){return e.room_code?`<button class="route" data-map-room="${esc(e.room_code)}">Open map ↗</button>`:''}
 function card(e){const live=isCurrentEvent(e);return `<article class="class-card subject-card ${live?'current':''}" style="${subjectStyle(e.module)}" data-event-date="${esc(e.date||'')}" data-event-start="${esc(e.start)}"><div class="clock"><b>${esc(formatTime(e.start))}</b><span>${esc(formatTime(e.end))}</span></div><div><div class="row"><h3>${esc(e.module)}</h3>${live?'<span class="live-tag">NOW</span>':''}<span class="tag">${esc(e.type)}</span></div><div class="place">${esc(e.room_code||e.room_raw)}${e.room_name?`<small> · ${esc(e.room_name)}</small>`:''}</div><div class="teacher">${esc(e.staff)}</div></div>${mapButton(e)}</article>`}
 function nav(){return `<nav>${[['today','Today'],['week','Week'],['changes','Changes'],['settings','Settings']].map(([k,l])=>`<button data-tab="${k}" class="${state.tab===k?'active':''}">${l}</button>`).join('')}</nav>`}
