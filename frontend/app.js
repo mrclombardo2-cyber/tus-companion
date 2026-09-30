@@ -249,7 +249,6 @@ async function setReminderMinutes(value){
   state.prefs.reminderMinutes=minutes;
   savePrefs();
   if(minutes>0&&!state.push.subscribed){
-    render();
     await enableNotifications();
     await refreshPushStatus();
     if(!state.push.subscribed){
@@ -263,7 +262,21 @@ async function setReminderMinutes(value){
   toast(minutes?`Class reminder set for ${minutes} min before.`:'Class reminders off.');
 }
 async function enableNotifications(){
-  try{const d=deviceInfo();if(d.ios&&!d.standalone){state.notifyModal=false;state.installModal=true;render();return}if(!state.push.supported)throw new Error('Push notifications are not supported in this browser.');const reg=await navigator.serviceWorker.ready,{publicKey}=await api('/api/push/public-key');if(!publicKey)throw new Error('Push is not configured on the server yet.');const perm=await Notification.requestPermission();if(perm!=='granted'){await refreshPushStatus();render();return}let sub=await reg.pushManager.getSubscription();if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(publicKey)});const data=sub.toJSON();await api('/api/push/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({group_id:state.selection.group,endpoint:sub.endpoint,keys:data.keys,hidden_modules:[...hiddenModules()],reminder_minutes:Number(state.prefs.reminderMinutes||0)})});await refreshPushStatus();toast('Notifications enabled on this device.')}catch(e){toast(e.message||String(e))}
+  try{
+    const d=deviceInfo();
+    if(d.ios&&!d.standalone){state.notifyModal=false;state.installModal=true;render();return}
+    if(!state.push.supported)throw new Error('Push notifications are not supported in this browser.');
+    const perm=Notification.permission==='granted'?'granted':await Notification.requestPermission();
+    if(perm!=='granted'){await refreshPushStatus();render();return}
+    const reg=await navigator.serviceWorker.ready,{publicKey}=await api('/api/push/public-key');
+    if(!publicKey)throw new Error('Push is not configured on the server yet.');
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(publicKey)});
+    const data=sub.toJSON();
+    await api('/api/push/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({group_id:state.selection.group,endpoint:sub.endpoint,keys:data.keys,hidden_modules:[...hiddenModules()],reminder_minutes:Number(state.prefs.reminderMinutes||0)})});
+    await refreshPushStatus();
+    toast('Notifications enabled on this device.');
+  }catch(e){toast(e.message||String(e))}
 }
 async function testNotification(){try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(!sub)throw new Error('Enable notifications first.');await api('/api/push/test',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});toast('Test notification queued.')}catch(e){toast(e.message||String(e))}}
 async function disableNotifications(){try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(sub){await api('/api/push/unsubscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})}).catch(()=>{});await sub.unsubscribe()}await refreshPushStatus();toast('Notifications turned off.')}catch(e){toast(e.message||String(e))}}
