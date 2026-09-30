@@ -204,7 +204,8 @@ export class ScientiaSession {
     if (cookie) headers.set("cookie", cookie);
     headers.set("user-agent", "Mozilla/5.0 (compatible; TUS-Companion/1.8; +https://workers.dev)");
     headers.set("accept", headers.get("accept") || "text/html,application/xhtml+xml");
-    const response = await this.fetchImpl(url, { ...init, headers, redirect: "manual" });
+    const fetcher = this.fetchImpl;
+    const response = await fetcher(url, { ...init, headers, redirect: "manual" });
     this.cookies.update(response.headers, url);
 
     if (response.status >= 300 && response.status < 400) {
