@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v15.4
+name: Deploy Cloudflare Worker v15.4.1
 
 on:
   workflow_dispatch:
@@ -73,7 +73,7 @@ jobs:
           )"
           echo "public_key=$pub" >> "$GITHUB_OUTPUT"
 
-      - name: Check v15.4 source
+      - name: Check v15.4.1 source
         shell: bash
         run: |
           set -euo pipefail
@@ -83,7 +83,7 @@ jobs:
           node --check frontend/app.js
           node --check frontend/sw.js
 
-      - name: Deploy v15.4 to Cloudflare
+      - name: Deploy v15.4.1 to Cloudflare
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -107,7 +107,7 @@ jobs:
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
 
-      - name: Verify live v15.4 and scheduler
+      - name: Verify live v15.4.1 and scheduler
         shell: bash
         run: |
           set -euo pipefail
@@ -115,7 +115,7 @@ jobs:
 
           echo "Checking deployed Worker..."
           health="$(curl --fail --silent --show-error "$base/health")"
-          printf '%s\n' "$health" | jq -e '.status == "ok" and .version == "1.8.4-cloud"' >/dev/null
+          printf '%s\n' "$health" | jq -e '.status == "ok" and .version == "1.8.5-cloud"' >/dev/null
           printf '%s\n' "$health" | jq -e '(.collector.source_session_error // "") == ""' >/dev/null
           before="$(printf '%s\n' "$health" | jq -r '.collector.last_cycle_finished_at // ""')"
 
@@ -142,4 +142,4 @@ jobs:
             exit 1
           fi
 
-          echo "Cloudflare v15.4 live verification passed."
+          echo "Cloudflare v15.4.1 live verification passed."
