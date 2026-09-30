@@ -46,7 +46,7 @@ class ApiError extends Error{
   constructor(status,detail,raw=''){super(detail||raw||`Request failed (${status})`);this.status=status;this.detail=detail;this.raw=raw}
 }
 
-window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;if(state.selection&&state.snapshot&&shouldAutoOfferInstall()){state.installModal=true;render()}});
+window.addEventListener('beforeinstallprompt',e=>{e.preventDefault();deferredInstallPrompt=e;if(shouldAutoOfferInstall()){state.installModal=true;render()}});
 window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;state.installModal=false;localStorage.setItem(INSTALL_DISMISSED,String(Date.now()));localStorage.setItem(INSTALL_DONE,'1');toast('App installed.');});
 
 function readSelection(){try{return JSON.parse(localStorage.getItem(STORE)||'null')}catch{return null}}
@@ -396,7 +396,7 @@ async function init(){
   if('serviceWorker'in navigator)await navigator.serviceWorker.register('/sw.js').catch(()=>{});
   await refreshPushStatus();
   if(state.selection){ensurePendingSince(false);await watchAndLoad(true);}
-  if(state.selection&&state.snapshot&&shouldAutoOfferInstall())setTimeout(()=>{state.installModal=true;render()},1200);
+  if(shouldAutoOfferInstall())setTimeout(()=>{state.installModal=true;render()},1200);
   render();setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS);
 }
 setInterval(()=>{if(state.selection&&!state.snapshot)updatePendingUi()},1000);
