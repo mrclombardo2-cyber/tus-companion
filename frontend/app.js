@@ -92,12 +92,20 @@ function mapUrl(room,departure){
   return u;
 }
 function b64(s){const p='='.repeat((4-s.length%4)%4),b=(s+p).replace(/-/g,'+').replace(/_/g,'/'),raw=atob(b);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)))}
-function dayName(){return new Intl.DateTimeFormat('en-IE',{weekday:'long'}).format(new Date())}
-function isoToday(){const d=new Date(),m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${d.getFullYear()}-${m}-${day}`}
+function campusNow(){
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Dublin',year:'numeric',month:'2-digit',day:'2-digit',weekday:'long',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date());
+  const get=t=>parts.find(p=>p.type===t)?.value||'';
+  return {date:`${get('year')}-${get('month')}-${get('day')}`,day:get('weekday'),minutes:Number(get('hour'))*60+Number(get('minute'))};
+}
+function dayName(){return campusNow().day}
+function isoToday(){return campusNow().date}
 function eventTime(e,key){if(!e?.date||!e?.[key])return null;const d=new Date(`${e.date}T${e[key]}:00`);return Number.isNaN(d.getTime())?null:d}
-function isCurrentEvent(e){const now=new Date(),s=eventTime(e,'start'),end=eventTime(e,'end');return !!(s&&end&&e.date===isoToday()&&now>=s&&now<end)}
+function isCurrentEvent(e){const now=campusNow();return !!(e?.date===now.date&&timeMinutes(e.start)<=now.minutes&&now.minutes<timeMinutes(e.end))}
 function currentEvent(){return visibleEvents().find(isCurrentEvent)||null}
-function nextEvent(){const now=new Date();return [...visibleEvents()].filter(e=>{const end=eventTime(e,'end');return end&&end>=now}).sort((a,b)=>`${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`))[0]||null}
+function nextEvent(){
+  const now=campusNow();
+  return [...visibleEvents()].filter(e=>e?.date>now.date||(e?.date===now.date&&timeMinutes(e.end)>=now.minutes)).sort((a,b)=>`${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`))[0]||null
+}
 function previousFor(e){if(!e)return null;return visibleEvents().filter(x=>x.date===e.date&&x.end<=e.start&&x.room_code).sort((a,b)=>b.end.localeCompare(a.end))[0]||null}
 function smartDepartureFor(e){const current=currentEvent();if(current&&current!==e&&current.room_code)return current.room_code;return previousFor(e)?.room_code||null}
 function formatTime(value){
@@ -313,10 +321,10 @@ function updateMapOriginCandidate(){
   const save=document.getElementById('save-map-origin');
   if(!label||!save)return;
   if(state.mapPick?.value){
-    label.textContent='Point selected on the campus map';
+    label.textContent='Starting place selected';
     save.disabled=false;
   }else{
-    label.textContent='Tap your usual entrance or starting place on the map.';
+    label.textContent='Tap where you normally start, or use search.';
     save.disabled=true;
   }
 }
@@ -341,7 +349,7 @@ function renderOriginEditor(){
 }
 function renderMapOriginPicker(){
   const src=`${MAP}?embedded=true`;
-  return `<div class="modal-backdrop map-picker-backdrop"><section class="modal map-picker-modal" role="dialog" aria-modal="true"><button class="modal-x" data-close-map-origin aria-label="Close">×</button><p class="kicker">CHOOSE ON MAP</p><h2>Set your usual start</h2><p class="map-picker-copy">Tap a labelled entrance, room, or mapped place. Empty floor areas are not selectable in the public Mappedin viewer. We save the selected place only on this device.</p><div class="map-picker-frame"><iframe id="mappedin-origin-map" title="TUS Athlone campus map" src="${esc(src)}" allow="geolocation https://app.mappedin.com; clipboard-write; web-share" scrolling="no"></iframe></div><div class="map-picker-footer"><p id="map-origin-choice">Loading interactive campus map…</p><button id="save-map-origin" class="small-primary" disabled>Save this start</button></div></section></div>`;
+  return `<div class="modal-backdrop map-picker-backdrop"><section class="modal map-picker-modal" role="dialog" aria-modal="true"><button class="modal-x" data-close-map-origin aria-label="Close">×</button><p class="kicker">CHOOSE ON MAP</p><h2>Set your usual start</h2><p class="map-picker-copy">Choose the entrance, room, or mapped place you normally start from. Mappedin will put the map into start-selection mode automatically.</p><div class="map-picker-frame"><iframe id="mappedin-origin-map" title="TUS Athlone campus map" src="${esc(src)}" allow="geolocation https://app.mappedin.com; clipboard-write; web-share"></iframe></div><div class="map-picker-footer"><p id="map-origin-choice">Loading campus map…</p><button id="save-map-origin" class="small-primary" disabled>Save this start</button></div></section></div>`;
 }
 
 async function refreshPushStatus(){
@@ -384,22 +392,23 @@ window.addEventListener('message',event=>{
   const data=event.data;
   if(!data)return;
   if(data.type==='app-loaded'){
+    const iframe=document.getElementById('mappedin-origin-map');
+    const destination=knownRooms()[0]||visibleEvents().find(e=>e.room_code)?.room_code||'C74';
+    iframe?.contentWindow?.postMessage({type:'set-state',payload:{state:'/directions',location:destination}},MAPPEDIN_ORIGIN);
     const label=document.getElementById('map-origin-choice');
-    if(label)label.textContent='Tap a labelled entrance, room, or mapped place.';
+    if(label)label.textContent='Tap where you normally start. You can search for an entrance or room.';
     return;
   }
   if(data.type!=='state-changed'||!data.payload)return;
   const payload=data.payload;
   const departure=Array.isArray(payload.departure)?payload.departure[0]:null;
-  const location=Array.isArray(payload.location)?payload.location[0]:null;
-  const value=departure||location;
-  if(value){
-    state.mapPick={value:String(value),floor:payload.floor||null};
+  if(departure){
+    state.mapPick={value:String(departure),floor:payload.floor||null};
     updateMapOriginCandidate();
     return;
   }
   const label=document.getElementById('map-origin-choice');
-  if(label&&payload.floor)label.textContent='Floor selected. Now tap a labelled entrance, room, or mapped place.';
+  if(label&&payload.floor)label.textContent='Now choose your starting place on this floor.';
 });
 
 async function init(){
