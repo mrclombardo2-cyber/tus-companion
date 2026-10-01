@@ -113,9 +113,24 @@ jobs:
           set -euo pipefail
           base="https://tus-companion.tusathlone.workers.dev"
 
-          echo "Checking deployed Worker..."
-          health="$(curl --fail --silent --show-error "$base/health")"
-          printf '%s\n' "$health" | jq -e '.status == "ok" and .version == "1.8.7-cloud"' >/dev/null
+          echo "Waiting for the newly deployed Worker version to propagate..."
+          health=""
+          version_ok=false
+          for attempt in $(seq 1 12); do
+            health="$(curl --fail --silent --show-error "$base/health")"
+            live_version="$(printf '%s\n' "$health" | jq -r '.version // ""')"
+            if [ "$live_version" = "1.8.7-cloud" ]; then
+              version_ok=true
+              break
+            fi
+            echo "Waiting for version propagation ($attempt/12), live=$live_version..."
+            sleep 5
+          done
+          if [ "$version_ok" != "true" ]; then
+            echo "The new Worker version did not propagate within 60 seconds."
+            exit 1
+          fi
+
           before="$(printf '%s\n' "$health" | jq -r '.collector.last_cycle_finished_at // ""')"
 
           echo "Checking public catalog..."
@@ -128,16 +143,21 @@ jobs:
             current="$(curl --fail --silent --show-error "$base/health")"
             after="$(printf '%s\n' "$current" | jq -r '.collector.last_cycle_finished_at // ""')"
             source_error="$(printf '%s\n' "$current" | jq -r '.collector.source_session_error // ""')"
+            manual_required="$(printf '%s\n' "$current" | jq -r '.collector.source_browser_manual_required_at // ""')"
             if [ -n "$after" ] && [ "$after" != "$before" ] && [ -z "$source_error" ]; then
               echo "Scheduler/recovery confirmed: $after"
               ok=true
+              break
+            fi
+            if [ -n "$manual_required" ]; then
+              echo "Automatic recovery reached Microsoft interactive-login/MFA state."
               break
             fi
             echo "Waiting for scheduler/recovery ($attempt/36), source_error=$source_error..."
           done
 
           if [ "$ok" != "true" ]; then
-            echo "The Worker deployed, but healthy scheduler/source-session state was not confirmed within 180 seconds."
+            echo "The Worker deployed, but healthy scheduler/source-session state was not confirmed."
             curl --silent --show-error "$base/health" | jq .
             exit 1
           fi
