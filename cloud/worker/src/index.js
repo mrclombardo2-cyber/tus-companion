@@ -196,19 +196,9 @@ async function publicWatch(request, env) {
   let sync = await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
   const sourceError = await getMetaValue(env, "source_session_error");
   if (sourceError) {
-    const lastRetry = await getMetaValue(env, "source_session_last_retry_at");
-    const canRetry = sourceError === "source-session-expired" && (!lastRetry || ageMs(lastRetry) >= 2 * 60_000);
-    if (canRetry) {
-      try {
-        await setMetaValue(env, "source_session_last_retry_at", nowIso());
-        sync = await queueSingleGroupIfNeeded(env, groupId, departmentId, sync);
-      } catch (err) {
-        console.error("queue source recovery", err);
-        sync = { ...(sync || {}), group_id: groupId, status: "error", error: "source-session-unavailable" };
-      }
-    } else {
-      sync = { ...(sync || {}), group_id: groupId, status: "error", error: "source-session-unavailable" };
-    }
+    // Recovery is centralized in the Cloudflare cron. Public clients should never
+    // create extra failing queue jobs while the central source session is being renewed.
+    sync = { ...(sync || {}), group_id: groupId, status: "error", error: "source-session-unavailable" };
   } else {
     try { sync = await queueSingleGroupIfNeeded(env, groupId, departmentId, sync); } catch (err) { console.error("queue watch", err); }
   }
@@ -473,6 +463,8 @@ async function adminSourceSession(request, env) {
   ).bind(String(req.ciphertext), String(req.nonce), nowIso()).run();
   await setMetaValue(env, "source_session_error", "");
   await setMetaValue(env, "source_session_last_retry_at", "");
+  await setMetaValue(env, "source_browser_manual_required_at", "");
+  await setMetaValue(env, "source_browser_last_error", "");
   return json({ ok: true });
 }
 
@@ -608,6 +600,8 @@ async function recoverSourceSessionWithBrowser(env) {
     await setMetaValue(env, "source_session_error", "");
     await setMetaValue(env, "source_session_last_retry_at", "");
     await setMetaValue(env, "source_browser_last_success_at", nowIso());
+    await setMetaValue(env, "source_browser_last_error", "");
+    await setMetaValue(env, "source_browser_manual_required_at", "");
     return true;
   } finally {
     try { if (context) await context.close(); } catch {}
@@ -618,6 +612,11 @@ async function recoverSourceSessionWithBrowser(env) {
 async function maybeRecoverSourceSession(env) {
   const sourceError = await getMetaValue(env, "source_session_error");
   if (sourceError !== "source-session-expired") return { attempted: false, recovered: !sourceError };
+
+  // If Microsoft has explicitly fallen back to interactive credentials/MFA,
+  // repeating headless browser attempts cannot solve it and only wastes Browser Run.
+  const manualRequired = await getMetaValue(env, "source_browser_manual_required_at");
+  if (manualRequired) return { attempted: false, recovered: false, manual_required: true };
 
   const lastAttempt = await getMetaValue(env, "source_browser_last_attempt_at");
   if (lastAttempt && ageMs(lastAttempt) < SOURCE_BROWSER_RECOVERY_MINUTES * 60_000) {
@@ -632,6 +631,9 @@ async function maybeRecoverSourceSession(env) {
     const message = String(err?.message || err);
     console.error("browser source recovery", message);
     await setMetaValue(env, "source_browser_last_error", message);
+    if (/browser-recovery-login-required/i.test(message)) {
+      await setMetaValue(env, "source_browser_manual_required_at", nowIso());
+    }
     return { attempted: true, recovered: false, error: message };
   }
 }
