@@ -186,7 +186,7 @@ function renderMobileWeek(events){
 }
 function renderWeek(){
   const events=visibleEvents().filter(e=>DAYS.slice(0,5).includes(e.day));
-  const {start,end}=weekBounds(events),pxPerHour=72,totalHeight=((end-start)/60)*pxPerHour;
+  const {start,end}=weekBounds(events),pxPerHour=72,bottomGutter=28,totalHeight=((end-start)/60)*pxPerHour+bottomGutter;
   const hours=[];for(let m=start;m<=end;m+=60)hours.push(m);
   const header=DAYS.slice(0,5).map(day=>{const date=shortDateForDay(day,events),isToday=day===dayName();return `<div class="week-day-head ${isToday?'is-today':''}"><b>${esc(day.slice(0,3))}</b>${date?`<span>${esc(date)}</span>`:''}${isToday?'<small>TODAY</small>':''}</div>`}).join('');
   const times=hours.map(m=>`<span class="week-time-label" style="top:${((m-start)/60)*pxPerHour}px">${esc(formatTime(`${Math.floor(m/60)}:00`))}</span>`).join('');
