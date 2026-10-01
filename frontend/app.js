@@ -53,7 +53,8 @@ function visibleEvents(){const h=hiddenModules();return (state.snapshot?.events|
 function esc(v=''){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 
 async function api(url,opts){
-  const r=await fetch(url,opts);
+  const fetchOpts={cache:'no-store',...(opts||{})};
+  const r=await fetch(url,fetchOpts);
   const raw=await r.text();
   let body=null;
   try{body=raw?JSON.parse(raw):null}catch{}
@@ -98,8 +99,9 @@ function syncDisplay(){
   const last=state.sync?.last_success_at,status=state.sync?.status;
   if(!last)return {updated:status==='syncing'?'Updating…':status==='error'?'Sync delayed':''};
   const age=Date.now()-new Date(last).getTime();
-  if(status==='error'||age>5*60*1000)return {updated:`Sync delayed · ${formatClockDate(last)}`};
   if(status==='syncing')return {updated:`Updating · ${formatClockDate(last)}`};
+  if(status==='error')return {updated:`Sync delayed · ${formatClockDate(last)}`};
+  if(age>10*60*1000)return {updated:`Sync delayed · ${formatClockDate(last)}`};
   return {updated:`Synced ${formatClockDate(last)}`};
 }
 function mapButton(e){return e.room_code?`<button class="route" data-map-room="${esc(e.room_code)}">Open map ↗</button>`:''}
