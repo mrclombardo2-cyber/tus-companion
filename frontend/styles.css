@@ -184,3 +184,187 @@ header>div:first-child{min-width:0}
 
 /* v15.4.3 notification status control */
 .small-primary:disabled{opacity:1;cursor:default}
+
+
+/* v15.4.4 desktop refinement */
+@media (min-width:900px){
+  body{
+    background:
+      radial-gradient(circle at 50% -15%,#fff 0,#f5f2eb 42%,#ebe6dc 100%);
+  }
+
+  .app{
+    width:min(1040px,calc(100% - 64px));
+    padding:38px 42px 124px;
+    border-left:1px solid #eee8dc;
+    border-right:1px solid #eee8dc;
+    box-shadow:0 0 80px #0000000a;
+  }
+
+  .week-app{
+    width:min(1480px,calc(100% - 56px));
+    max-width:none;
+    padding-left:40px;
+    padding-right:40px;
+  }
+
+  .app header{
+    margin-top:2px;
+    margin-bottom:30px;
+  }
+
+  .app header h1{
+    font-size:clamp(44px,4vw,62px);
+    letter-spacing:-.06em;
+  }
+
+  .header-status{
+    font-size:12px;
+    padding-bottom:8px;
+  }
+
+  .week-section{
+    margin-top:6px;
+  }
+
+  .week-caption{
+    margin:0 4px 12px;
+    font-size:11px;
+  }
+
+  .week-scroll{
+    overflow-x:auto;
+    overflow-y:hidden;
+    border-radius:24px;
+    box-shadow:0 12px 36px #0000000c;
+  }
+
+  .week-board{
+    width:100%;
+    min-width:1120px;
+    grid-template-columns:72px repeat(5,minmax(205px,1fr));
+    grid-template-rows:66px auto;
+  }
+
+  .week-day-head{
+    gap:2px;
+  }
+
+  .week-day-head b{
+    font-size:14px;
+  }
+
+  .week-day-head span{
+    font-size:11px;
+  }
+
+  .week-day-head small{
+    font-size:8px;
+    padding:4px 7px;
+  }
+
+  .week-time-label{
+    right:12px;
+    font-size:10.5px;
+  }
+
+  .week-day-col{
+    min-width:205px;
+  }
+
+  .week-event{
+    border-radius:12px;
+    padding:9px 10px;
+    gap:3px;
+    border-left-width:6px;
+    box-shadow:0 3px 10px #0000000d;
+  }
+
+  .week-event:hover{
+    transform:translateY(-2px);
+    box-shadow:0 9px 22px color-mix(in srgb,var(--subject-accent) 18%,transparent);
+  }
+
+  .week-event-time{
+    font-size:10px;
+  }
+
+  .week-event strong{
+    font-size:12.5px;
+    line-height:1.22;
+    -webkit-line-clamp:3;
+  }
+
+  .week-event-room{
+    font-size:11px;
+  }
+
+  .week-event em{
+    font-size:8.5px;
+    padding:3px 6px;
+  }
+
+  .hero{
+    padding:32px;
+    border-radius:30px;
+  }
+
+  .hero h2{
+    font-size:38px;
+  }
+
+  .class-card{
+    grid-template-columns:92px minmax(0,1fr) auto;
+    gap:20px;
+    padding:20px 22px;
+  }
+
+  .clock b{font-size:18px}
+  .clock span{font-size:12px}
+  .row h3{font-size:17px}
+  .place{font-size:14px}
+  .teacher{font-size:12px}
+  .route{font-size:12px}
+
+  .change{
+    padding:20px 22px;
+  }
+
+  .setting-card{
+    padding:20px 22px;
+  }
+
+  nav{
+    width:min(760px,calc(100% - 48px));
+    bottom:22px;
+    padding:8px;
+    border-radius:22px;
+  }
+
+  nav button{
+    min-height:48px;
+    font-size:13px;
+    border-radius:15px;
+  }
+}
+
+@media (min-width:1280px){
+  .week-app{
+    width:min(1520px,calc(100% - 72px));
+    padding-left:48px;
+    padding-right:48px;
+  }
+
+  .week-board{
+    min-width:0;
+    grid-template-columns:76px repeat(5,minmax(220px,1fr));
+  }
+
+  .week-day-col{
+    min-width:220px;
+  }
+
+  .week-event strong{
+    font-size:13px;
+  }
+}
