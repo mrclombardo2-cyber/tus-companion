@@ -107,7 +107,7 @@ async function setMetaValue(env, key, value) {
 }
 
 async function health(env) {
-  const [lastCycle, lastCycleErrors, catalogAt, sourceError, browserAttempt, browserSuccess, browserError] = await Promise.all([
+  const [lastCycle, lastCycleErrors, catalogAt, sourceError, browserAttempt, browserSuccess, browserError, manualRequired] = await Promise.all([
     getMetaValue(env, "last_cycle_finished_at"),
     getMetaValue(env, "last_cycle_errors"),
     getMetaValue(env, "catalog_updated_at"),
@@ -115,6 +115,7 @@ async function health(env) {
     getMetaValue(env, "source_browser_last_attempt_at"),
     getMetaValue(env, "source_browser_last_success_at"),
     getMetaValue(env, "source_browser_last_error"),
+    getMetaValue(env, "source_browser_manual_required_at"),
   ]);
   return json({
     status: "ok",
@@ -130,6 +131,7 @@ async function health(env) {
       source_browser_last_attempt_at: browserAttempt || null,
       source_browser_last_success_at: browserSuccess || null,
       source_browser_last_error: browserError || null,
+      source_browser_manual_required_at: manualRequired || null,
     },
   });
 }
