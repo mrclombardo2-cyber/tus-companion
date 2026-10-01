@@ -107,22 +107,29 @@ async function setMetaValue(env, key, value) {
 }
 
 async function health(env) {
-  const [lastCycle, lastCycleErrors, catalogAt, sourceError] = await Promise.all([
+  const [lastCycle, lastCycleErrors, catalogAt, sourceError, browserAttempt, browserSuccess, browserError] = await Promise.all([
     getMetaValue(env, "last_cycle_finished_at"),
     getMetaValue(env, "last_cycle_errors"),
     getMetaValue(env, "catalog_updated_at"),
     getMetaValue(env, "source_session_error"),
+    getMetaValue(env, "source_browser_last_attempt_at"),
+    getMetaValue(env, "source_browser_last_success_at"),
+    getMetaValue(env, "source_browser_last_error"),
   ]);
   return json({
     status: "ok",
-    platform: "cloudflare-workers-d1-queues",
+    platform: "cloudflare-workers-d1-queues-browser-run",
     version: APP_VERSION,
     collector: {
       schedule_target_seconds: 60,
+      source_browser_recovery_minutes: SOURCE_BROWSER_RECOVERY_MINUTES,
       last_cycle_finished_at: lastCycle,
       last_cycle_errors: lastCycleErrors == null ? null : Number(lastCycleErrors),
       catalog_updated_at: catalogAt,
       source_session_error: sourceError || null,
+      source_browser_last_attempt_at: browserAttempt || null,
+      source_browser_last_success_at: browserSuccess || null,
+      source_browser_last_error: browserError || null,
     },
   });
 }
