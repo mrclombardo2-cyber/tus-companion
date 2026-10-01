@@ -1,8 +1,9 @@
 import webpush from "web-push";
-import { ScientiaSession } from "./scientia.js";
+import { launch } from "@cloudflare/playwright";
+import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
-const APP_VERSION = "1.8.6-cloud";
+const APP_VERSION = "1.8.7-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -16,6 +17,8 @@ const PRELOAD_ERROR_RETRY_HOURS = 6;
 const PUSH_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_WINDOW_MINUTES = 3;
+const SOURCE_BROWSER_RECOVERY_MINUTES = 10;
+const SOURCE_BROWSER_RECOVERY_TIMEOUT_MS = 45_000;
 const MAP_URL = "https://app.mappedin.com/map/68b1b5dd74254a000bbf174b";
 const SESSION_AAD = new TextEncoder().encode("tus-companion-source-session-v1");
 
@@ -516,6 +519,116 @@ async function saveSourceStorageState(env, state) {
   ).bind(bytesB64(new Uint8Array(encrypted)), bytesB64(nonce), nowIso()).run();
 }
 
+
+async function browserPageReady(page) {
+  try { return await page.locator("#dlFilter2").isVisible({ timeout: 800 }); }
+  catch { return false; }
+}
+
+async function browserOpenStudentSet(page, timeout = 8_000) {
+  if (await browserPageReady(page)) return true;
+  try {
+    const link = page.locator("#LinkBtn_StudentSetByName");
+    if (!(await link.isVisible({ timeout: 800 }))) return false;
+    await link.click();
+    await page.locator("#dlFilter2").waitFor({ state: "visible", timeout });
+    return true;
+  } catch {
+    return browserPageReady(page);
+  }
+}
+
+async function browserClickStudentGateway(page) {
+  for (const selector of [
+    'input[type="submit"][value="Student"]',
+    'input[type="button"][value="Student"]',
+    'button:has-text("Student")',
+    'a:has-text("Student")',
+  ]) {
+    try {
+      const loc = page.locator(selector).first();
+      if (await loc.isVisible({ timeout: 500 })) {
+        await loc.click();
+        return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
+async function recoverSourceSessionWithBrowser(env) {
+  if (!env.BROWSER) throw new Error("browser-recovery-binding-missing");
+  const storage = await loadSourceStorageState(env);
+  const browser = await launch(env.BROWSER);
+  let context;
+  try {
+    context = await browser.newContext({
+      storageState: storage,
+      viewport: { width: 1440, height: 1000 },
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154 Safari/537.36",
+    });
+    const page = await context.newPage();
+    await page.goto(TUS_BASE_URL, { waitUntil: "domcontentloaded", timeout: 30_000 });
+
+    let ready = await browserOpenStudentSet(page);
+    if (!ready) {
+      const clicked = await browserClickStudentGateway(page);
+      if (!clicked) throw new Error("browser-recovery-login-required");
+
+      const deadline = Date.now() + SOURCE_BROWSER_RECOVERY_TIMEOUT_MS;
+      while (Date.now() < deadline && !ready) {
+        for (const candidate of [...context.pages()].reverse()) {
+          if (await browserOpenStudentSet(candidate, 4_000)) {
+            ready = true;
+            break;
+          }
+        }
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 750));
+      }
+    }
+
+    if (!ready) throw new Error("browser-recovery-login-required");
+
+    const refreshed = await context.storageState();
+    await saveSourceStorageState(env, refreshed);
+
+    // Verify the refreshed browser state through the lightweight HTTP collector
+    // before declaring recovery successful.
+    const verify = new ScientiaSession(refreshed);
+    await verify.ensureReady();
+    await saveSourceStorageState(env, verify.storageState());
+
+    await setMetaValue(env, "source_session_error", "");
+    await setMetaValue(env, "source_session_last_retry_at", "");
+    await setMetaValue(env, "source_browser_last_success_at", nowIso());
+    return true;
+  } finally {
+    try { if (context) await context.close(); } catch {}
+    try { await browser.close(); } catch {}
+  }
+}
+
+async function maybeRecoverSourceSession(env) {
+  const sourceError = await getMetaValue(env, "source_session_error");
+  if (sourceError !== "source-session-expired") return { attempted: false, recovered: !sourceError };
+
+  const lastAttempt = await getMetaValue(env, "source_browser_last_attempt_at");
+  if (lastAttempt && ageMs(lastAttempt) < SOURCE_BROWSER_RECOVERY_MINUTES * 60_000) {
+    return { attempted: false, recovered: false };
+  }
+
+  await setMetaValue(env, "source_browser_last_attempt_at", nowIso());
+  try {
+    await recoverSourceSessionWithBrowser(env);
+    return { attempted: true, recovered: true };
+  } catch (err) {
+    const message = String(err?.message || err);
+    console.error("browser source recovery", message);
+    await setMetaValue(env, "source_browser_last_error", message);
+    return { attempted: true, recovered: false, error: message };
+  }
+}
+
 function pushChangeSummary(ch) {
   const a = ch.after || {}, b = ch.before || {};
   const name = String(ch.module || ch.activity || "Class").trim();
@@ -774,22 +887,15 @@ async function enqueueScheduledWork(env) {
   const started = nowIso();
   let groupsQueued = 0, errors = 0;
   try {
-    const sourceError = await getMetaValue(env, "source_session_error");
+    let sourceError = await getMetaValue(env, "source_session_error");
     if (sourceError) {
-      const lastRetry = await getMetaValue(env, "source_session_last_retry_at");
-      const retryDue = sourceError === "source-session-expired" && (!lastRetry || ageMs(lastRetry) >= 15 * 60_000);
-      if (retryDue) {
-        const groups = await activeGroups(env);
-        const candidate = groups[0];
-        if (candidate) {
-          await setMetaValue(env, "source_session_last_retry_at", nowIso());
-          await queueSingleGroupIfNeeded(env, candidate.group_id, candidate.department_id, candidate);
-          groupsQueued = 1;
-          return;
-        }
+      const recovery = await maybeRecoverSourceSession(env);
+      if (recovery.recovered) {
+        sourceError = "";
+      } else {
+        errors = 1;
+        return;
       }
-      errors = 1;
-      return;
     }
     const catalogAt = await getMetaValue(env, "catalog_updated_at");
     const lastCatalogQueue = await getMetaValue(env, "catalog_last_enqueued_at");
