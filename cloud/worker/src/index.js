@@ -1,6 +1,6 @@
 import webpush from "web-push";
 import { launch } from "@cloudflare/playwright";
-import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
+import { ScientiaSession, TUS_BASE_URL, extractSelect } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
 const APP_VERSION = "1.8.7-cloud";
@@ -509,6 +509,18 @@ async function loadSourceStorageState(env) {
   try { return JSON.parse(new TextDecoder().decode(plain)); } catch { throw new Error("source-session-invalid-json"); }
 }
 
+
+async function diagnosticWeekOptions(env) {
+  const storage = await loadSourceStorageState(env);
+  const scientia = new ScientiaSession(storage);
+  const html = await scientia.ensureReady();
+  await saveSourceStorageState(env, scientia.storageState());
+  return json({
+    week_options: extractSelect(html, "lbWeeks")?.options || [],
+    period_options: extractSelect(html, "dlPeriod")?.options || [],
+  });
+}
+
 async function saveSourceStorageState(env, state) {
   const key = await sourceCryptoKey(env);
   const nonce = crypto.getRandomValues(new Uint8Array(12));
@@ -963,6 +975,7 @@ async function route(request, env) {
   const url = new URL(request.url), path = url.pathname;
   if (path === "/health" && request.method === "GET") return health(env);
   if (path === "/api/meta" && request.method === "GET") return json({ version: APP_VERSION, operator_name: env.OPERATOR_NAME || "Independent TUS Companion project", contact_email: env.CONTACT_EMAIL || "", legal_version: LEGAL_VERSION });
+  if (path === "/api/_diag-week-options-7f3b9c" && request.method === "GET") return diagnosticWeekOptions(env);
   if (path === "/api/catalog" && request.method === "GET") return catalog(env);
   if (path === "/api/watch" && request.method === "POST") return publicWatch(request, env);
   if (path === "/api/push/public-key" && request.method === "GET") return json({ publicKey: env.VAPID_PUBLIC_KEY || null });
