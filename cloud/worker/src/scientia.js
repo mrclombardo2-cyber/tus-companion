@@ -263,18 +263,27 @@ export class ScientiaSession {
     const groupSelect = extractSelect(html, "dlObject");
     if (!groupSelect?.options.some((x) => x.value === group)) throw new Error("unknown-group-in-department");
 
-    const currentWeek = extractSelect(html, "lbWeeks")?.options.find((x) => x.selected)?.value || "";
-    if (currentWeek !== week) html = await this.postback(html, "lbWeeks", { dlFilter2: department, dlObject: group, lbWeeks: week });
+    const weekSelect = extractSelect(html, "lbWeeks");
+    let weekValue = String(week);
+    const trimmedWeek = weekValue.trim();
+    if (/^\d+$/.test(trimmedWeek)) {
+      const option = weekSelect?.options.find((x) => String(x.value || "").trim() === trimmedWeek);
+      if (!option) throw new Error("unknown-week");
+      weekValue = option.value;
+    }
+
+    const currentWeek = weekSelect?.options.find((x) => x.selected)?.value || "";
+    if (currentWeek !== weekValue) html = await this.postback(html, "lbWeeks", { dlFilter2: department, dlObject: group, lbWeeks: weekValue });
 
     const currentPeriod = extractSelect(html, "dlPeriod")?.options.find((x) => x.selected)?.value || "";
-    if (currentPeriod !== period) html = await this.postback(html, "dlPeriod", { dlFilter2: department, dlObject: group, lbWeeks: week, lbDays: days, dlPeriod: period });
+    if (currentPeriod !== period) html = await this.postback(html, "dlPeriod", { dlFilter2: department, dlObject: group, lbWeeks: weekValue, lbDays: days, dlPeriod: period });
 
     await this.post(html, {
       __EVENTTARGET: "",
       __EVENTARGUMENT: "",
       dlFilter2: department,
       dlObject: group,
-      lbWeeks: week,
+      lbWeeks: weekValue,
       lbDays: days,
       dlPeriod: period,
       RadioType: TEXT_LAYOUT,
