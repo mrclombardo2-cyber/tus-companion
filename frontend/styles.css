@@ -368,3 +368,61 @@ header>div:first-child{min-width:0}
     font-size:13px;
   }
 }
+
+
+/* v15.4.8 future-week navigation */
+.desktop-week-picker{
+  display:flex;
+  gap:8px;
+  overflow-x:auto;
+  overscroll-behavior-inline:contain;
+  scrollbar-width:none;
+  padding:0 2px 10px;
+  margin:0 0 4px;
+  scroll-snap-type:x proximity;
+}
+.desktop-week-picker::-webkit-scrollbar{display:none}
+.desktop-week-chip{
+  flex:0 0 auto;
+  border:1px solid #ded8cc;
+  background:#f4f1ea;
+  color:#625d54;
+  border-radius:999px;
+  padding:9px 14px;
+  font-size:11px;
+  font-weight:800;
+  white-space:nowrap;
+  cursor:pointer;
+  scroll-snap-align:center;
+}
+.desktop-week-chip.selected{
+  background:#171715;
+  border-color:#171715;
+  color:#fff;
+  box-shadow:0 6px 16px #00000014;
+}
+
+@media(max-width:760px){
+  .mobile-day-picker{
+    display:flex;
+    grid-template-columns:none;
+    gap:6px;
+    overflow-x:auto;
+    overflow-y:hidden;
+    overscroll-behavior-inline:contain;
+    -webkit-overflow-scrolling:touch;
+    scrollbar-width:none;
+    scroll-snap-type:x proximity;
+    padding:1px 1px 5px;
+    margin:0 0 16px;
+  }
+  .mobile-day-picker::-webkit-scrollbar{display:none}
+  .mobile-day{
+    flex:0 0 calc((100% - 24px)/5);
+    min-width:66px;
+    scroll-snap-align:center;
+  }
+  .mobile-day.week-start:not(:first-child){
+    margin-left:8px;
+  }
+}
