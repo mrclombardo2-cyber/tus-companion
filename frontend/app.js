@@ -35,7 +35,7 @@ function subjectStyle(name){const c=subjectColor(name);return `--subject-bg:${c.
 let deferredInstallPrompt=null;
 let lastWatchAt=0;
 let lastLoadAt=0;
-let state={catalog:[],selection:readSelection(),snapshot:null,changes:[],sync:null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:''};
+let state={catalog:[],selection:readSelection(),snapshot:null,changes:[],sync:null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:''};
 
 class ApiError extends Error{
   constructor(status,detail,raw=''){super(detail||raw||`Request failed (${status})`);this.status=status;this.detail=detail;this.raw=raw}
@@ -50,7 +50,7 @@ function readPrefs(){try{return {...defaultPrefs(),...JSON.parse(localStorage.ge
 function savePrefs(){localStorage.setItem(PREFS,JSON.stringify(state.prefs))}
 function hiddenModules(){try{return new Set(JSON.parse(localStorage.getItem(FILTERS)||'[]'))}catch{return new Set()}}
 function visibleEvents(){const h=hiddenModules();return (state.snapshot?.events||[]).filter(e=>!h.has(e.module))}
-function visibleUpcomingEvents(){const h=hiddenModules();return [...(state.snapshot?.events||[]),...(state.snapshot?.next_week?.events||[])].filter(e=>!h.has(e.module))}
+function visibleUpcomingEvents(){const h=hiddenModules();const future=(state.snapshot?.future_weeks||[]).flatMap(w=>w?.events||[]);return [...(state.snapshot?.events||[]),...(state.snapshot?.next_week?.events||[]),...future].filter(e=>!h.has(e.module))}
 function esc(v=''){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 
 async function api(url,opts){
@@ -120,7 +120,7 @@ function setup(){
     const d=state.catalog.find(x=>x.id===dep.value);const g=d?.groups?.find(x=>x.id===grp.value);
     state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};
     localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);
-    state.snapshot=null;state.changes=[];state.error='';state.sync={status:'queued'};
+    state.snapshot=null;state.changes=[];state.weekDate=null;state.weekStart=null;state.error='';state.sync={status:'queued'};
     await updateExistingSubscription();render();await watchAndLoad(true);render();
   };
   bindCommon();
@@ -142,12 +142,12 @@ function renderPending(){
 function render(){
   if(!state.selection)return setup();
   if(!state.snapshot)return renderPending();
-  const title=state.tab==='today'?'Today':state.tab==='week'?'This week':state.tab==='changes'?'Changes':'Settings';
+  const title=state.tab==='today'?'Today':state.tab==='week'?weekPageTitle():state.tab==='changes'?'Changes':'Settings';
   let body=state.tab==='today'?renderToday():state.tab==='week'?renderWeek():state.tab==='changes'?renderChanges():renderSettings();
   const syncUi=syncDisplay();
   APP.innerHTML=`<main class="app ${state.tab==='week'?'week-app':''}"><header><div><p class="kicker">TUS ATHLONE</p><h1>${title}</h1></div><div class="header-status">${esc(syncUi.updated)}</div></header>${body}${nav()}</main>${renderOverlays()}${state.toast?`<div class="toast" role="status">${esc(state.toast)}</div>`:''}`;
   bindCommon();
-  if(state.tab==='week')setTimeout(()=>{const mobile=window.matchMedia?.('(max-width:760px)').matches;document.querySelector(mobile?'.mobile-week-card.current':'.week-event.current')?.scrollIntoView({behavior:'smooth',block:'center',inline:'nearest'})},120);
+  if(state.tab==='week')setTimeout(()=>{const mobile=window.matchMedia?.('(max-width:760px)').matches;if(mobile){document.querySelector('.mobile-day.selected')?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'})}else{document.querySelector('.desktop-week-chip.selected')?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'})}},120);
 }
 
 function renderToday(){
@@ -162,7 +162,48 @@ function weekBounds(events){
   if(end-start<6*60)end=Math.min(22*60,start+6*60);
   return {start,end};
 }
-function shortDateForDay(day,events){const e=events.find(x=>x.day===day&&x.date);if(!e)return '';const d=new Date(`${e.date}T12:00:00`);return Number.isNaN(d.getTime())?'':new Intl.DateTimeFormat('en-IE',{day:'numeric',month:'short'}).format(d)}
+function isoFromDate(d){const m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${d.getFullYear()}-${m}-${day}`}
+function addIsoDays(iso,days){const d=new Date(`${iso}T12:00:00`);if(Number.isNaN(d.getTime()))return '';d.setDate(d.getDate()+days);return isoFromDate(d)}
+function shortDateIso(iso){if(!iso)return '';const d=new Date(`${iso}T12:00:00`);return Number.isNaN(d.getTime())?'':new Intl.DateTimeFormat('en-IE',{day:'numeric',month:'short'}).format(d)}
+function longDayIso(iso){if(!iso)return '';const d=new Date(`${iso}T12:00:00`);return Number.isNaN(d.getTime())?'':new Intl.DateTimeFormat('en-IE',{weekday:'long'}).format(d)}
+function loadedWeeks(){
+  if(!state.snapshot)return [];
+  const hidden=hiddenModules(),raw=[
+    {week_number:state.snapshot.week_number,week_start:state.snapshot.week_start,week_end:state.snapshot.week_end,fetched_at:state.snapshot.fetched_at,events:state.snapshot.events||[]},
+    state.snapshot.next_week,
+    ...(state.snapshot.future_weeks||[])
+  ].filter(Boolean);
+  const by=new Map();
+  for(const w of raw){
+    const key=String(w.week_number||w.week_start||'');
+    if(!key||by.has(key))continue;
+    by.set(key,{...w,events:(w.events||[]).filter(e=>!hidden.has(e.module))});
+  }
+  return [...by.values()].sort((a,b)=>String(a.week_start||'').localeCompare(String(b.week_start||''))||Number(a.week_number||0)-Number(b.week_number||0));
+}
+function selectedWeekSnapshot(weeks=loadedWeeks()){
+  if(!weeks.length)return null;
+  let selected=state.weekStart?weeks.find(w=>w.week_start===state.weekStart):null;
+  if(!selected){
+    const today=isoToday();
+    selected=weeks.find(w=>w.week_start&&w.week_end&&today>=w.week_start&&today<=w.week_end)||weeks[0];
+    state.weekStart=selected?.week_start||null;
+  }
+  return selected||weeks[0];
+}
+function weekPageTitle(){
+  const weeks=loadedWeeks(),selected=selectedWeekSnapshot(weeks),current=weeks[0];
+  if(!selected||!current)return 'This week';
+  if(Number(selected.week_number)===Number(current.week_number))return 'This week';
+  if(Number(selected.week_number)===Number(current.week_number)+1)return 'Next week';
+  return selected.week_start?`Week of ${shortDateIso(selected.week_start)}`:'Week';
+}
+function weekChipLabel(week,current){
+  if(Number(week.week_number)===Number(current?.week_number))return 'This week';
+  if(Number(week.week_number)===Number(current?.week_number)+1)return 'Next week';
+  const start=shortDateIso(week.week_start),end=shortDateIso(addIsoDays(week.week_start,4));
+  return start&&end?`${start} – ${end}`:`Week ${week.week_number||''}`;
+}
 function overlapLayout(list){
   const sorted=[...list].sort((a,b)=>timeMinutes(a.start)-timeMinutes(b.start)||timeMinutes(a.end)-timeMinutes(b.end));
   const groups=[];let current=[],maxEnd=-1;
@@ -172,30 +213,44 @@ function overlapLayout(list){
   for(const group of groups){const laneEnds=[];const placed=[];for(const e of group){const s=timeMinutes(e.start),en=timeMinutes(e.end);let lane=laneEnds.findIndex(x=>x<=s);if(lane<0){lane=laneEnds.length;laneEnds.push(en)}else laneEnds[lane]=en;placed.push({e,lane})}const lanes=Math.max(1,laneEnds.length);placed.forEach(x=>out.push({...x,lanes}))}
   return out;
 }
-function mobileWeekDay(events){
-  const weekdays=DAYS.slice(0,5);
-  if(state.weekDay&&weekdays.includes(state.weekDay))return state.weekDay;
-  const today=dayName();
-  if(weekdays.includes(today)){state.weekDay=today;return today}
-  const first=weekdays.find(d=>events.some(e=>e.day===d))||weekdays[0];state.weekDay=first;return first;
+function selectedMobileDate(weeks){
+  const days=weeks.flatMap(w=>DAYS.slice(0,5).map((day,i)=>({day,date:addIsoDays(w.week_start,i),weekStart:w.week_start,weekNumber:w.week_number})));
+  if(state.weekDate&&days.some(x=>x.date===state.weekDate))return state.weekDate;
+  const today=isoToday();
+  if(days.some(x=>x.date===today)){state.weekDate=today;state.weekStart=days.find(x=>x.date===today)?.weekStart||state.weekStart;return today}
+  const selectedWeek=selectedWeekSnapshot(weeks);
+  const first=days.find(x=>x.weekStart===selectedWeek?.week_start)||days[0];
+  state.weekDate=first?.date||null;
+  state.weekStart=first?.weekStart||state.weekStart;
+  return state.weekDate;
 }
-function renderMobileWeek(events){
-  const selected=mobileWeekDay(events),weekdays=DAYS.slice(0,5);
-  const picker=weekdays.map(day=>{const date=shortDateForDay(day,events),today=day===dayName();return `<button class="mobile-day ${selected===day?'selected':''} ${today?'today':''}" data-week-day="${esc(day)}" aria-pressed="${selected===day?'true':'false'}"><b>${esc(day.slice(0,3))}</b><span>${esc(date||'—')}</span></button>`}).join('');
-  const list=events.filter(e=>e.day===selected).sort((a,b)=>a.start.localeCompare(b.start));
-  const classes=list.length?list.map(e=>{const live=isCurrentEvent(e),room=e.room_code||e.room_raw||'Room TBC';const inner=`<span class="mobile-week-time"><b>${esc(formatTime(e.start))}</b><span>${esc(formatTime(e.end))}</span></span><span class="mobile-week-info"><strong>${esc(e.module)}</strong><span class="mobile-week-meta"><b>${esc(room)}</b>${e.type?`<span>${esc(e.type)}</span>`:''}</span>${e.staff?`<small>${esc(e.staff)}</small>`:''}</span><span class="mobile-week-side">${live?'<em>NOW</em>':''}${e.room_code?'<span aria-hidden="true">›</span>':''}</span>`;return e.room_code?`<button class="mobile-week-card ${live?'current':''}" style="${subjectStyle(e.module)}" data-map-room="${esc(e.room_code)}" aria-label="${esc(e.module)}, ${esc(formatRange(e))}, ${esc(room)}. Open campus map.">${inner}</button>`:`<div class="mobile-week-card no-route ${live?'current':''}" style="${subjectStyle(e.module)}">${inner}</div>`}).join(''):`<div class="mobile-week-empty">No classes on ${esc(selected)}.</div>`;
-  const date=shortDateForDay(selected,events),count=list.length;
-  return `<div class="mobile-week"><div class="mobile-day-picker" aria-label="Choose day">${picker}</div><div class="mobile-week-heading"><div><p>${selected===dayName()?'TODAY':esc(selected.toUpperCase())}</p><h2>${esc(selected)}${date?` · ${esc(date)}`:''}</h2></div><span>${count} ${count===1?'class':'classes'}</span></div><div class="mobile-week-list">${classes}</div></div>`;
+function renderMobileWeek(weeks){
+  if(!weeks.length)return '<div class="mobile-week"><div class="mobile-week-empty">No timetable data available.</div></div>';
+  const selected=selectedMobileDate(weeks),today=isoToday(),tomorrow=isoDateOffset(1),current=weeks[0];
+  const days=weeks.flatMap(w=>DAYS.slice(0,5).map((day,i)=>({day,date:addIsoDays(w.week_start,i),weekStart:w.week_start,weekNumber:w.week_number})));
+  const selectedMeta=days.find(x=>x.date===selected)||days[0];
+  const selectedWeek=weeks.find(w=>w.week_start===selectedMeta?.weekStart)||weeks[0];
+  const picker=days.map((x,i)=>{
+    const isToday=x.date===today,isSelected=x.date===selected,isWeekStart=i>0&&x.day==='Monday';
+    return `<button class="mobile-day ${isSelected?'selected':''} ${isToday?'today':''} ${isWeekStart?'week-start':''}" data-week-date="${esc(x.date)}" data-week-start="${esc(x.weekStart)}" aria-pressed="${isSelected?'true':'false'}"><b>${esc(x.day.slice(0,3))}</b><span>${esc(shortDateIso(x.date)||'—')}</span></button>`;
+  }).join('');
+  const list=(selectedWeek.events||[]).filter(e=>e.date===selected).sort((a,b)=>a.start.localeCompare(b.start));
+  const classes=list.length?list.map(e=>{const live=isCurrentEvent(e),room=e.room_code||e.room_raw||'Room TBC';const inner=`<span class="mobile-week-time"><b>${esc(formatTime(e.start))}</b><span>${esc(formatTime(e.end))}</span></span><span class="mobile-week-info"><strong>${esc(e.module)}</strong><span class="mobile-week-meta"><b>${esc(room)}</b>${e.type?`<span>${esc(e.type)}</span>`:''}</span>${e.staff?`<small>${esc(e.staff)}</small>`:''}</span><span class="mobile-week-side">${live?'<em>NOW</em>':''}${e.room_code?'<span aria-hidden="true">›</span>':''}</span>`;return e.room_code?`<button class="mobile-week-card ${live?'current':''}" style="${subjectStyle(e.module)}" data-map-room="${esc(e.room_code)}" aria-label="${esc(e.module)}, ${esc(formatRange(e))}, ${esc(room)}. Open campus map.">${inner}</button>`:`<div class="mobile-week-card no-route ${live?'current':''}" style="${subjectStyle(e.module)}">${inner}</div>`}).join(''):`<div class="mobile-week-empty">No classes on ${esc(longDayIso(selected)||selectedMeta?.day||'this day')}.</div>`;
+  const count=list.length;
+  const context=selected===today?'TODAY':selected===tomorrow?'TOMORROW':Number(selectedWeek.week_number)===Number(current.week_number)+1?'NEXT WEEK':Number(selectedWeek.week_number)===Number(current.week_number)?String(selectedMeta?.day||'').toUpperCase():`WEEK ${selectedWeek.week_number||''}`;
+  return `<div class="mobile-week"><div class="mobile-day-picker" aria-label="Choose day">${picker}</div><div class="mobile-week-heading"><div><p>${esc(context)}</p><h2>${esc(longDayIso(selected)||selectedMeta?.day||'')}${selected?` · ${esc(shortDateIso(selected))}`:''}</h2></div><span>${count} ${count===1?'class':'classes'}</span></div><div class="mobile-week-list">${classes}</div></div>`;
 }
 function renderWeek(){
-  const events=visibleEvents().filter(e=>DAYS.slice(0,5).includes(e.day));
+  const weeks=loadedWeeks(),selectedWeek=selectedWeekSnapshot(weeks)||{events:[],week_start:null,week_number:null},currentWeek=weeks[0]||selectedWeek;
+  const events=(selectedWeek.events||[]).filter(e=>DAYS.slice(0,5).includes(e.day));
   const {start,end}=weekBounds(events),pxPerHour=72,bottomGutter=28,totalHeight=((end-start)/60)*pxPerHour+bottomGutter;
   const hours=[];for(let m=start;m<=end;m+=60)hours.push(m);
-  const header=DAYS.slice(0,5).map(day=>{const date=shortDateForDay(day,events),isToday=day===dayName();return `<div class="week-day-head ${isToday?'is-today':''}"><b>${esc(day.slice(0,3))}</b>${date?`<span>${esc(date)}</span>`:''}${isToday?'<small>TODAY</small>':''}</div>`}).join('');
+  const header=DAYS.slice(0,5).map((day,i)=>{const date=selectedWeek.week_start?addIsoDays(selectedWeek.week_start,i):'';const isToday=date===isoToday();return `<div class="week-day-head ${isToday?'is-today':''}"><b>${esc(day.slice(0,3))}</b>${date?`<span>${esc(shortDateIso(date))}</span>`:''}${isToday?'<small>TODAY</small>':''}</div>`}).join('');
   const times=hours.map(m=>`<span class="week-time-label" style="top:${((m-start)/60)*pxPerHour}px">${esc(formatTime(`${Math.floor(m/60)}:00`))}</span>`).join('');
-  const dayCols=DAYS.slice(0,5).map((day,dayIndex)=>{const list=events.filter(e=>e.day===day),isToday=day===dayName();const blocks=overlapLayout(list).map(({e,lane,lanes})=>{const top=((timeMinutes(e.start)-start)/60)*pxPerHour,height=Math.max(42,((timeMinutes(e.end)-timeMinutes(e.start))/60)*pxPerHour-4),left=(lane/lanes)*100,width=100/lanes;const current=isCurrentEvent(e);return `<button class="week-event ${current?'current':''}" style="${subjectStyle(e.module)};top:${top}px;height:${height}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px)" ${e.room_code?`data-map-room="${esc(e.room_code)}"`:''} title="${esc(e.module)} · ${esc(formatRange(e))}"><span class="week-event-time">${esc(formatTime(e.start))}</span><strong>${esc(e.module)}</strong><span class="week-event-room">${esc(e.room_code||e.room_raw||'')}</span>${current?'<em>NOW</em>':''}</button>`}).join('');return `<div class="week-day-col ${isToday?'is-today':''}" style="height:${totalHeight}px" data-day="${dayIndex}">${blocks}</div>`}).join('');
-  const desktop=`<div class="week-desktop"><div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div></div>`;
-  return `<section class="week-section">${renderMobileWeek(events)}${desktop}</section>`;
+  const dayCols=DAYS.slice(0,5).map((day,dayIndex)=>{const date=selectedWeek.week_start?addIsoDays(selectedWeek.week_start,dayIndex):'';const list=events.filter(e=>e.day===day),isToday=date===isoToday();const blocks=overlapLayout(list).map(({e,lane,lanes})=>{const top=((timeMinutes(e.start)-start)/60)*pxPerHour,height=Math.max(42,((timeMinutes(e.end)-timeMinutes(e.start))/60)*pxPerHour-4),left=(lane/lanes)*100,width=100/lanes;const current=isCurrentEvent(e);return `<button class="week-event ${current?'current':''}" style="${subjectStyle(e.module)};top:${top}px;height:${height}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px)" ${e.room_code?`data-map-room="${esc(e.room_code)}"`:''} title="${esc(e.module)} · ${esc(formatRange(e))}"><span class="week-event-time">${esc(formatTime(e.start))}</span><strong>${esc(e.module)}</strong><span class="week-event-room">${esc(e.room_code||e.room_raw||'')}</span>${current?'<em>NOW</em>':''}</button>`}).join('');return `<div class="week-day-col ${isToday?'is-today':''}" style="height:${totalHeight}px" data-day="${dayIndex}">${blocks}</div>`}).join('');
+  const weekPicker=weeks.map(w=>`<button class="desktop-week-chip ${w.week_start===selectedWeek.week_start?'selected':''}" data-week-select="${esc(w.week_start||'')}">${esc(weekChipLabel(w,currentWeek))}</button>`).join('');
+  const desktop=`<div class="week-desktop"><div class="desktop-week-picker" aria-label="Choose week">${weekPicker}</div><div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div></div>`;
+  return `<section class="week-section">${renderMobileWeek(weeks)}${desktop}</section>`;
 }
 function changeLabel(type){return ({ROOM_CHANGED:'Room changed',TIME_CHANGED:'Time changed',CLASS_ADDED:'Class added',CLASS_REMOVED:'Class removed',LECTURER_CHANGED:'Lecturer changed',CLASS_TYPE_CHANGED:'Class type changed',TEACHING_WEEKS_CHANGED:'Teaching weeks changed'})[type]||String(type||'Update').replaceAll('_',' ')}
 function renderChanges(){
@@ -223,7 +278,8 @@ function renderLegalModal(kind){
 
 function bindCommon(){
   APP.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{state.tab=b.dataset.tab;history.replaceState(null,'',state.tab==='today'?'/' : `/?tab=${state.tab}`);render()});
-  APP.querySelectorAll('[data-week-day]').forEach(b=>b.onclick=()=>{state.weekDay=b.dataset.weekDay;render()});
+  APP.querySelectorAll('[data-week-date]').forEach(b=>b.onclick=()=>{state.weekDate=b.dataset.weekDate;state.weekStart=b.dataset.weekStart||state.weekStart;render();setTimeout(()=>document.querySelector(`[data-week-date="${CSS.escape(state.weekDate||'')}"]`)?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'}),20)});
+  APP.querySelectorAll('[data-week-select]').forEach(b=>b.onclick=()=>{state.weekStart=b.dataset.weekSelect||null;state.weekDate=null;render();});
   APP.querySelectorAll('[data-legal]').forEach(b=>b.onclick=()=>{state.legal=b.dataset.legal;render()});
   APP.querySelectorAll('[data-close-modal]').forEach(b=>b.onclick=()=>{state.legal=null;state.installModal=false;render()});
   APP.querySelectorAll('[data-close-notify]').forEach(b=>b.onclick=()=>{localStorage.setItem(NOTIFY_ONBOARDING,'seen');state.notifyModal=false;render()});
@@ -242,7 +298,7 @@ function bindCommon(){
   const change=document.getElementById('change');if(change)change.onclick=changeCourse;
 }
 
-function changeCourse(){localStorage.removeItem(STORE);state.selection=null;state.snapshot=null;state.changes=[];state.sync=null;state.error='';render()}
+function changeCourse(){localStorage.removeItem(STORE);state.selection=null;state.snapshot=null;state.changes=[];state.sync=null;state.weekDate=null;state.weekStart=null;state.error='';render()}
 function toast(message){state.toast=message;render();setTimeout(()=>{if(state.toast===message){state.toast='';render()}},2800)}
 function deviceInfo(){const ua=navigator.userAgent||'',ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1),android=/Android/i.test(ua),standalone=window.matchMedia?.('(display-mode: standalone)').matches||window.navigator.standalone===true;return {ios,android,desktop:!ios&&!android,standalone}}
 function shouldAutoOfferInstall(){const d=deviceInfo();if(d.standalone)return false;const last=Number(localStorage.getItem(INSTALL_DISMISSED)||0);return !last||Date.now()-last>14*24*60*60*1000}
