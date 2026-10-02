@@ -50,6 +50,7 @@ function readPrefs(){try{return {...defaultPrefs(),...JSON.parse(localStorage.ge
 function savePrefs(){localStorage.setItem(PREFS,JSON.stringify(state.prefs))}
 function hiddenModules(){try{return new Set(JSON.parse(localStorage.getItem(FILTERS)||'[]'))}catch{return new Set()}}
 function visibleEvents(){const h=hiddenModules();return (state.snapshot?.events||[]).filter(e=>!h.has(e.module))}
+function visibleUpcomingEvents(){const h=hiddenModules();return [...(state.snapshot?.events||[]),...(state.snapshot?.next_week?.events||[])].filter(e=>!h.has(e.module))}
 function esc(v=''){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 
 async function api(url,opts){
@@ -78,7 +79,7 @@ function isoToday(){const d=new Date(),m=String(d.getMonth()+1).padStart(2,'0'),
 function eventTime(e,key){if(!e?.date||!e?.[key])return null;const d=new Date(`${e.date}T${e[key]}:00`);return Number.isNaN(d.getTime())?null:d}
 function isCurrentEvent(e){const now=new Date(),s=eventTime(e,'start'),end=eventTime(e,'end');return !!(s&&end&&e.date===isoToday()&&now>=s&&now<end)}
 function currentEvent(){return visibleEvents().find(isCurrentEvent)||null}
-function nextEvent(){const now=new Date();return [...visibleEvents()].filter(e=>{const end=eventTime(e,'end');return end&&end>=now}).sort((a,b)=>`${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`))[0]||null}
+function nextEvent(){const now=new Date();return [...visibleUpcomingEvents()].filter(e=>{const end=eventTime(e,'end');return end&&end>=now}).sort((a,b)=>`${a.date} ${a.start}`.localeCompare(`${b.date} ${b.start}`))[0]||null}
 function formatTime(value){
   if(!value)return '';
   const [h0,m0='00']=String(value).split(':'),h=Number(h0),m=Number(m0);
@@ -89,10 +90,12 @@ function formatTime(value){
 function formatRange(e){return `${formatTime(e.start)}–${formatTime(e.end)}`}
 function formatClockDate(iso){if(!iso)return '';const d=new Date(iso);return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit',hour12:state.prefs.timeFormat==='12'})}
 function formatDetected(iso){if(!iso)return '';return new Date(iso).toLocaleString([],{dateStyle:'medium',timeStyle:'short',hour12:state.prefs.timeFormat==='12'})}
-function eventWeekday(e){if(e?.day)return String(e.day).toUpperCase();if(e?.date){const d=new Date(`${e.date}T12:00:00`);if(!Number.isNaN(d.getTime()))return new Intl.DateTimeFormat('en-IE',{weekday:'long'}).format(d).toUpperCase()}return ''}
+function eventWeekday(e){if(e?.date){const d=new Date(`${e.date}T12:00:00`);if(!Number.isNaN(d.getTime()))return new Intl.DateTimeFormat('en-IE',{weekday:'long'}).format(d).toUpperCase()}if(e?.day)return String(e.day).toUpperCase();return ''}
+function isoDateOffset(days){const d=new Date();d.setDate(d.getDate()+days);const m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${d.getFullYear()}-${m}-${day}`}
 function nextClassContext(e){
   if(!e)return '';
-  if(e.date===isoToday()||e.day===dayName())return 'TODAY';
+  if(e.date===isoToday())return 'TODAY';
+  if(e.date===isoDateOffset(1))return 'TOMORROW';
   return eventWeekday(e);
 }
 function syncDisplay(){
