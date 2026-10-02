@@ -961,8 +961,10 @@ async function syncOneGroup(env, scientia, item) {
     let nextWeek = previous?.next_week || null;
     const expectedNextWeek = Number(snapshot.week_number || 0) + 1;
     const nextWeekMatches = Number(nextWeek?.week_number || 0) === expectedNextWeek;
-    const nextWeekStale = !nextWeek?.fetched_at || ageMs(nextWeek.fetched_at) >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
-    if (!nextWeek || !nextWeekMatches || (!snapshotHasFutureEvent(snapshot) && nextWeekStale)) {
+    const nextWeekAge = ageMs(nextWeek?.fetched_at);
+    const nextWeekUrgentStale = !nextWeek?.fetched_at || nextWeekAge >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
+    const nextWeekBrowseStale = !nextWeek?.fetched_at || nextWeekAge >= FUTURE_WEEK_REFRESH_HOURS * 3600_000;
+    if (!nextWeek || !nextWeekMatches || nextWeekBrowseStale || (!snapshotHasFutureEvent(snapshot) && nextWeekUrgentStale)) {
       const nextHtml = await scientia.fetchTimetable(departmentId, groupId, "n");
       nextWeek = compactNextWeekSnapshot(parseTextSpreadsheet(nextHtml));
     }
