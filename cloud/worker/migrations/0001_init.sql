@@ -84,3 +84,15 @@ CREATE TABLE IF NOT EXISTS source_session(
   nonce TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+
+CREATE TABLE IF NOT EXISTS week_snapshots(
+  group_id TEXT NOT NULL,
+  week_number INTEGER NOT NULL,
+  week_start TEXT,
+  week_end TEXT,
+  fetched_at TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  PRIMARY KEY(group_id, week_number)
+);
+CREATE INDEX IF NOT EXISTS idx_week_snapshots_group ON week_snapshots(group_id, week_number);
