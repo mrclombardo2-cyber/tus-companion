@@ -858,7 +858,7 @@ async function syncOneGroup(env, scientia, item) {
     // Next Week separately so the Today hero can always show the next real class.
     let nextWeek = previous?.next_week || null;
     const nextWeekStale = !nextWeek?.fetched_at || ageMs(nextWeek.fetched_at) >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
-    if (!snapshotHasFutureEvent(snapshot) || !nextWeek || nextWeekStale) {
+    if (!nextWeek || (!snapshotHasFutureEvent(snapshot) && nextWeekStale)) {
       const nextHtml = await scientia.fetchTimetable(departmentId, groupId, "n");
       nextWeek = compactNextWeekSnapshot(parseTextSpreadsheet(nextHtml));
     }
