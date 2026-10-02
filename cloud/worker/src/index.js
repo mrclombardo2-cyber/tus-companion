@@ -3,7 +3,7 @@ import { launch } from "@cloudflare/playwright";
 import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
-const APP_VERSION = "1.8.9-cloud";
+const APP_VERSION = "1.8.10-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -135,8 +135,6 @@ async function health(env) {
       schedule_target_seconds: 60,
       source_browser_recovery_minutes: SOURCE_BROWSER_RECOVERY_MINUTES,
       next_week_refresh_minutes: NEXT_WEEK_REFRESH_MINUTES,
-      future_week_count: FUTURE_WEEK_COUNT,
-      future_week_refresh_hours: FUTURE_WEEK_REFRESH_HOURS,
       last_cycle_finished_at: lastCycle,
       last_cycle_errors: lastCycleErrors == null ? null : Number(lastCycleErrors),
       catalog_updated_at: catalogAt,
@@ -225,13 +223,7 @@ async function timetable(env, groupId) {
   const row = await env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
   if (!row) return apiError(404, "not-synced-yet");
   const snapshot = safeParse(row.payload, {});
-  const currentWeek = Number(snapshot?.week_number || 0);
-  const futureRows = currentWeek
-    ? await env.DB.prepare(
-        "SELECT payload FROM week_snapshots WHERE group_id=? AND week_number>? AND week_number<=? ORDER BY week_number",
-      ).bind(groupId, currentWeek + 1, Math.min(52, currentWeek + FUTURE_WEEK_COUNT)).all()
-    : { results: [] };
-  snapshot.future_weeks = (futureRows.results || []).map((r) => safeParse(r.payload, null)).filter(Boolean);
+  delete snapshot.future_weeks;
   const sync = await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
   return json({ snapshot, sync: sync || { group_id: groupId, status: "ok" } });
 }
@@ -965,9 +957,8 @@ async function syncOneGroup(env, scientia, item) {
     const expectedNextWeek = Number(snapshot.week_number || 0) + 1;
     const nextWeekMatches = Number(nextWeek?.week_number || 0) === expectedNextWeek;
     const nextWeekAge = ageMs(nextWeek?.fetched_at);
-    const nextWeekUrgentStale = !nextWeek?.fetched_at || nextWeekAge >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
-    const nextWeekBrowseStale = !nextWeek?.fetched_at || nextWeekAge >= FUTURE_WEEK_REFRESH_HOURS * 3600_000;
-    if (!nextWeek || !nextWeekMatches || nextWeekBrowseStale || (!snapshotHasFutureEvent(snapshot) && nextWeekUrgentStale)) {
+    const nextWeekStale = !nextWeek?.fetched_at || nextWeekAge >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
+    if (!nextWeek || !nextWeekMatches || nextWeekStale) {
       const nextHtml = await scientia.fetchTimetable(departmentId, groupId, "n");
       nextWeek = compactNextWeekSnapshot(parseTextSpreadsheet(nextHtml));
     }
@@ -980,7 +971,6 @@ async function syncOneGroup(env, scientia, item) {
     if (saved.inserted_changes.length) {
       await env.SYNC_QUEUE.send({ type: "push-changes", group_id: groupId, changes: compactPushChanges(saved.inserted_changes), after_endpoint: "" });
     }
-    await maybeQueueFutureWeeks(env, groupId, departmentId, snapshot.week_number);
     return {
       group_id: groupId,
       events: snapshot.events.length,
@@ -1171,7 +1161,7 @@ export default {
       try {
         if (body.type === "catalog") await runCatalogJob(env);
         else if (body.type === "groups") await runGroupJob(env, body.groups || []);
-        else if (body.type === "future-weeks") await runFutureWeeksJob(env, body);
+        else if (body.type === "future-weeks") { /* legacy v15.4.8 job: intentionally ignored */ }
         else if (body.type === "push-test") await sendTestPush(env, String(body.endpoint || ""));
         else if (body.type === "lesson-reminders") {
           const result = await sendLessonReminders(env, String(body.after_endpoint || ""));
