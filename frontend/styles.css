@@ -433,3 +433,14 @@ header>div:first-child{min-width:0}
   .mobile-day-picker{scroll-behavior:auto}
   .mobile-day{transition:background-color .12s ease,border-color .12s ease,color .12s ease,box-shadow .12s ease}
 }
+
+/* v15.4.11 keep edge time labels fully visible inside the week viewport */
+.week-time-label:first-child{
+  top:4px!important;
+  transform:none;
+}
+.week-time-label:last-child{
+  top:auto!important;
+  bottom:4px;
+  transform:none;
+}
