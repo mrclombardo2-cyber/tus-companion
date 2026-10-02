@@ -3,7 +3,7 @@ import { launch } from "@cloudflare/playwright";
 import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
-const APP_VERSION = "1.8.8-cloud";
+const APP_VERSION = "1.8.9-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -20,6 +20,9 @@ const REMINDER_WINDOW_MINUTES = 3;
 const SOURCE_BROWSER_RECOVERY_MINUTES = 10;
 const SOURCE_BROWSER_RECOVERY_TIMEOUT_MS = 45_000;
 const NEXT_WEEK_REFRESH_MINUTES = 10;
+const FUTURE_WEEK_COUNT = 6;
+const FUTURE_WEEK_REFRESH_HOURS = 6;
+const FUTURE_WEEK_QUEUE_COOLDOWN_MINUTES = 10;
 const MAP_URL = "https://app.mappedin.com/map/68b1b5dd74254a000bbf174b";
 const SESSION_AAD = new TextEncoder().encode("tus-companion-source-session-v1");
 
@@ -77,6 +80,12 @@ async function ensureReminderSchema(env) {
       "PRIMARY KEY(endpoint,event_key,lead_minutes))",
     ).run();
     await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_reminder_deliveries_sent ON reminder_deliveries(sent_at)").run();
+    await env.DB.prepare(
+      "CREATE TABLE IF NOT EXISTS week_snapshots(" +
+      "group_id TEXT NOT NULL,week_number INTEGER NOT NULL,week_start TEXT,week_end TEXT,fetched_at TEXT NOT NULL,payload TEXT NOT NULL," +
+      "PRIMARY KEY(group_id,week_number))",
+    ).run();
+    await env.DB.prepare("CREATE INDEX IF NOT EXISTS idx_week_snapshots_group ON week_snapshots(group_id,week_number)").run();
     reminderSchemaReady = true;
   })();
   try {
@@ -126,6 +135,8 @@ async function health(env) {
       schedule_target_seconds: 60,
       source_browser_recovery_minutes: SOURCE_BROWSER_RECOVERY_MINUTES,
       next_week_refresh_minutes: NEXT_WEEK_REFRESH_MINUTES,
+      future_week_count: FUTURE_WEEK_COUNT,
+      future_week_refresh_hours: FUTURE_WEEK_REFRESH_HOURS,
       last_cycle_finished_at: lastCycle,
       last_cycle_errors: lastCycleErrors == null ? null : Number(lastCycleErrors),
       catalog_updated_at: catalogAt,
@@ -213,8 +224,16 @@ async function publicWatch(request, env) {
 async function timetable(env, groupId) {
   const row = await env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
   if (!row) return apiError(404, "not-synced-yet");
+  const snapshot = safeParse(row.payload, {});
+  const currentWeek = Number(snapshot?.week_number || 0);
+  const futureRows = currentWeek
+    ? await env.DB.prepare(
+        "SELECT payload FROM week_snapshots WHERE group_id=? AND week_number>? AND week_number<=? ORDER BY week_number",
+      ).bind(groupId, currentWeek + 1, Math.min(52, currentWeek + FUTURE_WEEK_COUNT)).all()
+    : { results: [] };
+  snapshot.future_weeks = (futureRows.results || []).map((r) => safeParse(r.payload, null)).filter(Boolean);
   const sync = await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
-  return json({ snapshot: safeParse(row.payload, {}), sync: sync || { group_id: groupId, status: "ok" } });
+  return json({ snapshot, sync: sync || { group_id: groupId, status: "ok" } });
 }
 
 async function syncStatus(env, groupId) {
@@ -832,6 +851,89 @@ function compactNextWeekSnapshot(snapshot) {
   };
 }
 
+
+function futureWeekMetaKey(groupId, suffix) {
+  return `future_weeks:${suffix}:${groupId}`;
+}
+
+async function futureWeekCacheDue(env, groupId, currentWeekNumber) {
+  const current = Number(currentWeekNumber || 0);
+  if (!Number.isFinite(current) || current <= 0) return false;
+  const first = current + 2;
+  const last = Math.min(52, current + FUTURE_WEEK_COUNT);
+  if (first > last) return false;
+  const expected = last - first + 1;
+  const row = await env.DB.prepare(
+    "SELECT COUNT(*) AS n, MIN(fetched_at) AS oldest FROM week_snapshots WHERE group_id=? AND week_number BETWEEN ? AND ?",
+  ).bind(groupId, first, last).first();
+  if (Number(row?.n || 0) < expected) return true;
+  return !row?.oldest || ageMs(row.oldest) >= FUTURE_WEEK_REFRESH_HOURS * 3600_000;
+}
+
+async function maybeQueueFutureWeeks(env, groupId, departmentId, currentWeekNumber) {
+  if (!(await futureWeekCacheDue(env, groupId, currentWeekNumber))) return false;
+  const key = futureWeekMetaKey(groupId, "last_enqueued");
+  const lastQueued = await getMetaValue(env, key);
+  if (lastQueued && ageMs(lastQueued) < FUTURE_WEEK_QUEUE_COOLDOWN_MINUTES * 60_000) return false;
+  await setMetaValue(env, key, nowIso());
+  await env.SYNC_QUEUE.send({
+    type: "future-weeks",
+    group_id: groupId,
+    department_id: departmentId,
+    current_week_number: Number(currentWeekNumber || 0),
+  });
+  return true;
+}
+
+async function saveFutureWeekSnapshot(env, groupId, snapshot) {
+  const weekNumber = Number(snapshot?.week_number || 0);
+  if (!weekNumber) return;
+  await env.DB.prepare(
+    "INSERT INTO week_snapshots(group_id,week_number,week_start,week_end,fetched_at,payload) VALUES(?,?,?,?,?,?) " +
+    "ON CONFLICT(group_id,week_number) DO UPDATE SET week_start=excluded.week_start,week_end=excluded.week_end,fetched_at=excluded.fetched_at,payload=excluded.payload",
+  ).bind(
+    groupId,
+    weekNumber,
+    snapshot.week_start || null,
+    snapshot.week_end || null,
+    snapshot.fetched_at || nowIso(),
+    JSON.stringify(snapshot),
+  ).run();
+}
+
+async function runFutureWeeksJob(env, body) {
+  const groupId = String(body?.group_id || "");
+  const departmentId = String(body?.department_id || "");
+  const currentWeekNumber = Number(body?.current_week_number || 0);
+  if (!groupId || !departmentId || !currentWeekNumber) throw new Error("invalid-future-weeks-job");
+
+  const storage = await loadSourceStorageState(env);
+  const scientia = new ScientiaSession(storage);
+  try {
+    const first = currentWeekNumber + 2;
+    const last = Math.min(52, currentWeekNumber + FUTURE_WEEK_COUNT);
+    for (let weekNumber = first; weekNumber <= last; weekNumber++) {
+      const existing = await env.DB.prepare(
+        "SELECT fetched_at FROM week_snapshots WHERE group_id=? AND week_number=?",
+      ).bind(groupId, weekNumber).first();
+      if (existing?.fetched_at && ageMs(existing.fetched_at) < FUTURE_WEEK_REFRESH_HOURS * 3600_000) continue;
+
+      const html = await scientia.fetchTimetable(departmentId, groupId, String(weekNumber));
+      const snapshot = parseTextSpreadsheet(html);
+      snapshot.group_id = groupId;
+      snapshot.department_id = departmentId;
+      if (!snapshot.week_number) snapshot.week_number = weekNumber;
+      await saveFutureWeekSnapshot(env, groupId, compactNextWeekSnapshot(snapshot));
+    }
+    await saveSourceStorageState(env, scientia.storageState());
+    await setMetaValue(env, futureWeekMetaKey(groupId, "last_success"), nowIso());
+    return true;
+  } catch (err) {
+    try { await saveSourceStorageState(env, scientia.storageState()); } catch {}
+    throw err;
+  }
+}
+
 async function markSyncing(env, groupId) {
   const stamp = nowIso();
   await env.DB.prepare(
@@ -857,8 +959,10 @@ async function syncOneGroup(env, scientia, item) {
     // Keep the normal Week UI and change detection scoped to ThisWeek, but cache
     // Next Week separately so the Today hero can always show the next real class.
     let nextWeek = previous?.next_week || null;
+    const expectedNextWeek = Number(snapshot.week_number || 0) + 1;
+    const nextWeekMatches = Number(nextWeek?.week_number || 0) === expectedNextWeek;
     const nextWeekStale = !nextWeek?.fetched_at || ageMs(nextWeek.fetched_at) >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
-    if (!nextWeek || (!snapshotHasFutureEvent(snapshot) && nextWeekStale)) {
+    if (!nextWeek || !nextWeekMatches || (!snapshotHasFutureEvent(snapshot) && nextWeekStale)) {
       const nextHtml = await scientia.fetchTimetable(departmentId, groupId, "n");
       nextWeek = compactNextWeekSnapshot(parseTextSpreadsheet(nextHtml));
     }
@@ -871,6 +975,7 @@ async function syncOneGroup(env, scientia, item) {
     if (saved.inserted_changes.length) {
       await env.SYNC_QUEUE.send({ type: "push-changes", group_id: groupId, changes: compactPushChanges(saved.inserted_changes), after_endpoint: "" });
     }
+    await maybeQueueFutureWeeks(env, groupId, departmentId, snapshot.week_number);
     return {
       group_id: groupId,
       events: snapshot.events.length,
@@ -1061,6 +1166,7 @@ export default {
       try {
         if (body.type === "catalog") await runCatalogJob(env);
         else if (body.type === "groups") await runGroupJob(env, body.groups || []);
+        else if (body.type === "future-weeks") await runFutureWeeksJob(env, body);
         else if (body.type === "push-test") await sendTestPush(env, String(body.endpoint || ""));
         else if (body.type === "lesson-reminders") {
           const result = await sendLessonReminders(env, String(body.after_endpoint || ""));
