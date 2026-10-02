@@ -232,8 +232,23 @@ async function timetable(env, groupId) {
       ).bind(groupId, currentWeek + 1, Math.min(52, currentWeek + FUTURE_WEEK_COUNT)).all()
     : { results: [] };
   snapshot.future_weeks = (futureRows.results || []).map((r) => safeParse(r.payload, null)).filter(Boolean);
-  const sync = await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
-  return json({ snapshot, sync: sync || { group_id: groupId, status: "ok" } });
+  const [sync, futureEnqueued, futureAttempt, futureSuccess, futureError] = await Promise.all([
+    env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first(),
+    getMetaValue(env, futureWeekMetaKey(groupId, "last_enqueued")),
+    getMetaValue(env, futureWeekMetaKey(groupId, "last_attempt")),
+    getMetaValue(env, futureWeekMetaKey(groupId, "last_success")),
+    getMetaValue(env, futureWeekMetaKey(groupId, "last_error")),
+  ]);
+  return json({
+    snapshot,
+    sync: sync || { group_id: groupId, status: "ok" },
+    future_cache: {
+      last_enqueued_at: futureEnqueued || null,
+      last_attempt_at: futureAttempt || null,
+      last_success_at: futureSuccess || null,
+      error: futureError || null,
+    },
+  });
 }
 
 async function syncStatus(env, groupId) {
@@ -909,6 +924,7 @@ async function runFutureWeeksJob(env, body) {
 
   const storage = await loadSourceStorageState(env);
   const scientia = new ScientiaSession(storage);
+  await setMetaValue(env, futureWeekMetaKey(groupId, "last_attempt"), nowIso());
   try {
     const first = currentWeekNumber + 2;
     const last = Math.min(52, currentWeekNumber + FUTURE_WEEK_COUNT);
@@ -927,9 +943,11 @@ async function runFutureWeeksJob(env, body) {
     }
     await saveSourceStorageState(env, scientia.storageState());
     await setMetaValue(env, futureWeekMetaKey(groupId, "last_success"), nowIso());
+    await setMetaValue(env, futureWeekMetaKey(groupId, "last_error"), "");
     return true;
   } catch (err) {
     try { await saveSourceStorageState(env, scientia.storageState()); } catch {}
+    await setMetaValue(env, futureWeekMetaKey(groupId, "last_error"), String(err?.message || err));
     throw err;
   }
 }
