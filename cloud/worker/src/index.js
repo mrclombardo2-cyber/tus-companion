@@ -1,9 +1,9 @@
 import webpush from "web-push";
 import { launch } from "@cloudflare/playwright";
-import { ScientiaSession, TUS_BASE_URL, extractSelect } from "./scientia.js";
+import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
-const APP_VERSION = "1.8.7-cloud";
+const APP_VERSION = "1.8.8-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -19,6 +19,7 @@ const REMINDER_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_WINDOW_MINUTES = 3;
 const SOURCE_BROWSER_RECOVERY_MINUTES = 10;
 const SOURCE_BROWSER_RECOVERY_TIMEOUT_MS = 45_000;
+const NEXT_WEEK_REFRESH_MINUTES = 10;
 const MAP_URL = "https://app.mappedin.com/map/68b1b5dd74254a000bbf174b";
 const SESSION_AAD = new TextEncoder().encode("tus-companion-source-session-v1");
 
@@ -124,6 +125,7 @@ async function health(env) {
     collector: {
       schedule_target_seconds: 60,
       source_browser_recovery_minutes: SOURCE_BROWSER_RECOVERY_MINUTES,
+      next_week_refresh_minutes: NEXT_WEEK_REFRESH_MINUTES,
       last_cycle_finished_at: lastCycle,
       last_cycle_errors: lastCycleErrors == null ? null : Number(lastCycleErrors),
       catalog_updated_at: catalogAt,
@@ -510,17 +512,6 @@ async function loadSourceStorageState(env) {
 }
 
 
-async function diagnosticWeekOptions(env) {
-  const storage = await loadSourceStorageState(env);
-  const scientia = new ScientiaSession(storage);
-  const html = await scientia.ensureReady();
-  await saveSourceStorageState(env, scientia.storageState());
-  return json({
-    week_options: extractSelect(html, "lbWeeks")?.options || [],
-    period_options: extractSelect(html, "dlPeriod")?.options || [],
-  });
-}
-
 async function saveSourceStorageState(env, state) {
   const key = await sourceCryptoKey(env);
   const nonce = crypto.getRandomValues(new Uint8Array(12));
@@ -818,6 +809,29 @@ async function sendLessonReminders(env, afterEndpoint = "") {
 }
 
 
+
+function snapshotHasFutureEvent(snapshot) {
+  const clock = dublinClock();
+  return (Array.isArray(snapshot?.events) ? snapshot.events : []).some((event) => {
+    const date = String(event?.date || "");
+    if (date > clock.date) return true;
+    if (date < clock.date) return false;
+    const end = classStartMinute(event?.end);
+    return end >= clock.minuteOfDay;
+  });
+}
+
+function compactNextWeekSnapshot(snapshot) {
+  if (!snapshot) return null;
+  return {
+    week_number: snapshot.week_number ?? null,
+    week_start: snapshot.week_start ?? null,
+    week_end: snapshot.week_end ?? null,
+    fetched_at: snapshot.fetched_at ?? nowIso(),
+    events: Array.isArray(snapshot.events) ? snapshot.events : [],
+  };
+}
+
 async function markSyncing(env, groupId) {
   const stamp = nowIso();
   await env.DB.prepare(
@@ -831,13 +845,25 @@ async function syncOneGroup(env, scientia, item) {
   if (!groupId || !departmentId) throw new Error("invalid-group-job");
   await markSyncing(env, groupId);
   try {
-    const html = await scientia.fetchTimetable(departmentId, groupId);
+    const existing = await env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
+    const previous = safeParse(existing?.payload, null);
+
+    const html = await scientia.fetchTimetable(departmentId, groupId, "t");
     const snapshot = parseTextSpreadsheet(html);
     if (!snapshot.events.length) throw new Error("empty-timetable-response");
     snapshot.group_id = groupId;
     snapshot.department_id = departmentId;
-    const existing = await env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
-    const previous = safeParse(existing?.payload, null);
+
+    // Keep the normal Week UI and change detection scoped to ThisWeek, but cache
+    // Next Week separately so the Today hero can always show the next real class.
+    let nextWeek = previous?.next_week || null;
+    const nextWeekStale = !nextWeek?.fetched_at || ageMs(nextWeek.fetched_at) >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
+    if (!snapshotHasFutureEvent(snapshot) || !nextWeek || nextWeekStale) {
+      const nextHtml = await scientia.fetchTimetable(departmentId, groupId, "n");
+      nextWeek = compactNextWeekSnapshot(parseTextSpreadsheet(nextHtml));
+    }
+    snapshot.next_week = nextWeek;
+
     const changesList = diffSnapshots(previous, snapshot);
     const enriched = await enrichChanges(groupId, changesList);
     const payloadHash = await snapshotContentHash(snapshot);
@@ -845,13 +871,17 @@ async function syncOneGroup(env, scientia, item) {
     if (saved.inserted_changes.length) {
       await env.SYNC_QUEUE.send({ type: "push-changes", group_id: groupId, changes: compactPushChanges(saved.inserted_changes), after_endpoint: "" });
     }
-    return { group_id: groupId, events: snapshot.events.length, changes: saved.saved_changes };
+    return {
+      group_id: groupId,
+      events: snapshot.events.length,
+      next_week_events: nextWeek?.events?.length || 0,
+      changes: saved.saved_changes,
+    };
   } catch (err) {
     await saveResultPayload(env, { group_id: groupId, error: String(err?.message || err) });
     throw err;
   }
 }
-
 async function runGroupJob(env, groups) {
   const storage = await loadSourceStorageState(env);
   const scientia = new ScientiaSession(storage);
@@ -975,7 +1005,6 @@ async function route(request, env) {
   const url = new URL(request.url), path = url.pathname;
   if (path === "/health" && request.method === "GET") return health(env);
   if (path === "/api/meta" && request.method === "GET") return json({ version: APP_VERSION, operator_name: env.OPERATOR_NAME || "Independent TUS Companion project", contact_email: env.CONTACT_EMAIL || "", legal_version: LEGAL_VERSION });
-  if (path === "/api/_diag-week-options-7f3b9c" && request.method === "GET") return diagnosticWeekOptions(env);
   if (path === "/api/catalog" && request.method === "GET") return catalog(env);
   if (path === "/api/watch" && request.method === "POST") return publicWatch(request, env);
   if (path === "/api/push/public-key" && request.method === "GET") return json({ publicKey: env.VAPID_PUBLIC_KEY || null });
