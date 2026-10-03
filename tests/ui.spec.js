@@ -51,3 +51,13 @@ test("mobile keeps pinch zoom available and avoids iOS form-focus zoom",async({p
   const fontSize=await page.locator("#course-search").evaluate(el=>parseFloat(getComputedStyle(el).fontSize));
   expect(fontSize).toBeGreaterThanOrEqual(16);
 });
+
+
+test("service worker updates cannot strand an old frontend",async({page})=>{
+  await mockApi(page);
+  await page.goto("/");
+  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.2.2",{cache:"no-store"}).then(r=>r.text()));
+  expect(source).toContain("navigator.serviceWorker.addEventListener('controllerchange'");
+  expect(source).toContain("window.location.reload()");
+  expect(source).toContain("swControllerSeen");
+});

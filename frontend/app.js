@@ -55,6 +55,8 @@ let lastWatchAt=0;
 let lastLoadAt=0;
 let cachedRecoveryTimer=null;
 let cachedRecoveryStep=0;
+let swControllerSeen=Boolean('serviceWorker'in navigator&&navigator.serviceWorker.controller);
+let swControllerReloading=false;
 const initialSelection=readSelection();
 const initialOffline=readOfflineTimetable(initialSelection?.group);
 let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline),offlineSavedAt:initialOffline?.saved_at||null};
@@ -516,7 +518,16 @@ async function refreshLoop(){
 async function init(){
   const di=deviceInfo();document.documentElement.classList.toggle('ios-standalone',di.ios&&di.standalone);if(state.selection&&state.snapshot)render();
   try{const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta').catch(()=>null)]);if(Array.isArray(c?.departments)&&c.departments.length){state.catalog=c.departments;saveCatalogCache()}state.meta=m;if(!state.catalog.length)state.error='Course catalogue is still being prepared. Try again in a few minutes.'}catch{if(!state.catalog.length)state.error='Could not load the course catalogue from the service.'}
-  if('serviceWorker'in navigator){try{const reg=await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});await reg.update().catch(()=>{});if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'})}catch{}}
+  if('serviceWorker'in navigator){try{
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{
+      if(swControllerReloading)return;
+      if(swControllerSeen){swControllerReloading=true;window.location.reload();return}
+      swControllerSeen=true;
+    });
+    const reg=await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});
+    await reg.update().catch(()=>{});
+    if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
+  }catch{}}
   await refreshPushStatus();if(state.selection)await watchAndLoad(true);if(state.selection&&state.snapshot){setTimeout(()=>{if(shouldAutoOfferInstall()){state.installModal=true;render()}else if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},900)}render();setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS);
 }
 function temporalUiSignature(){

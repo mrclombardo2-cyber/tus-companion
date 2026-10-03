@@ -4,7 +4,7 @@ import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.9.2-cloud";
+const APP_VERSION = "1.9.3-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
