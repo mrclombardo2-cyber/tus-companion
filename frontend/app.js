@@ -363,12 +363,19 @@ function shouldAutoOfferInstall(){const d=deviceInfo();if(d.standalone)return fa
 function shouldOfferNotifyOnboarding(){const d=deviceInfo();if(localStorage.getItem(NOTIFY_ONBOARDING))return false;if(!state.selection||!state.snapshot||!state.push.supported||state.push.subscribed||state.push.permission!=='default')return false;if(d.ios&&!d.standalone)return false;return true}
 async function triggerNativeInstall(){if(!deferredInstallPrompt){state.installModal=true;render();return}deferredInstallPrompt.prompt();const choice=await deferredInstallPrompt.userChoice;if(choice?.outcome==='accepted'){localStorage.setItem(INSTALL_DISMISSED,String(Date.now()))}deferredInstallPrompt=null;state.installModal=false;render()}
 
+async function readyServiceWorker(timeoutMs=2500){
+  if(!('serviceWorker'in navigator))throw new Error('service-worker-unavailable');
+  return Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise((_,reject)=>setTimeout(()=>reject(new Error('service-worker-timeout')),timeoutMs))
+  ]);
+}
 async function refreshPushStatus(){
   state.push={supported:('serviceWorker'in navigator)&&('PushManager'in window)&&('Notification'in window),permission:('Notification'in window?Notification.permission:'default'),subscribed:false};
   if(!state.push.supported)return;
-  try{const reg=await navigator.serviceWorker.ready;state.push.subscribed=!!(await reg.pushManager.getSubscription())}catch{}
+  try{const reg=await readyServiceWorker();state.push.subscribed=!!(await reg.pushManager.getSubscription())}catch{}
 }
-async function updateExistingSubscription(){try{if(!state.selection||!('serviceWorker'in navigator))return;const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager?.getSubscription();if(!sub)return;const data=sub.toJSON();await api('/api/push/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({group_id:state.selection.group,endpoint:sub.endpoint,keys:data.keys,hidden_modules:[...hiddenModules()],reminder_minutes:Number(state.prefs.reminderMinutes||0)})})}catch{}}
+async function updateExistingSubscription(){try{if(!state.selection||!('serviceWorker'in navigator))return;const reg=await readyServiceWorker(),sub=await reg.pushManager?.getSubscription();if(!sub)return;const data=sub.toJSON();await api('/api/push/subscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({group_id:state.selection.group,endpoint:sub.endpoint,keys:data.keys,hidden_modules:[...hiddenModules()],reminder_minutes:Number(state.prefs.reminderMinutes||0)})})}catch{}}
 async function setReminderMinutes(value){
   const minutes=Number(value);
   if(![0,15,30,60].includes(minutes))return;
@@ -394,7 +401,7 @@ async function enableNotifications(){
     if(!state.push.supported)throw new Error('Push notifications are not supported in this browser.');
     const perm=Notification.permission==='granted'?'granted':await Notification.requestPermission();
     if(perm!=='granted'){await refreshPushStatus();render();return}
-    const reg=await navigator.serviceWorker.ready,{publicKey}=await api('/api/push/public-key');
+    const reg=await readyServiceWorker(),{publicKey}=await api('/api/push/public-key');
     if(!publicKey)throw new Error('Push is not configured on the server yet.');
     let sub=await reg.pushManager.getSubscription();
     if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64(publicKey)});
@@ -404,8 +411,8 @@ async function enableNotifications(){
     toast('Notifications enabled on this device.');
   }catch(e){toast(e.message||String(e))}
 }
-async function testNotification(){try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(!sub)throw new Error('Enable notifications first.');await api('/api/push/test',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});toast('Test notification queued.')}catch(e){toast(e.message||String(e))}}
-async function disableNotifications(){try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(sub){await api('/api/push/unsubscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})}).catch(()=>{});await sub.unsubscribe()}await refreshPushStatus();toast('Notifications turned off.')}catch(e){toast(e.message||String(e))}}
+async function testNotification(){try{const reg=await readyServiceWorker(),sub=await reg.pushManager.getSubscription();if(!sub)throw new Error('Enable notifications first.');await api('/api/push/test',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});toast('Test notification queued.')}catch(e){toast(e.message||String(e))}}
+async function disableNotifications(){try{const reg=await readyServiceWorker(),sub=await reg.pushManager.getSubscription();if(sub){await api('/api/push/unsubscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})}).catch(()=>{});await sub.unsubscribe()}await refreshPushStatus();toast('Notifications turned off.')}catch(e){toast(e.message||String(e))}}
 
 async function watchAndLoad(forceWatch=false){
   if(!state.selection||state.refreshing)return;state.refreshing=true;
