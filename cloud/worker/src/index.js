@@ -3,7 +3,7 @@ import { launch } from "@cloudflare/playwright";
 import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 
-const APP_VERSION = "1.8.10-cloud";
+const APP_VERSION = "1.8.11-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -1083,10 +1083,13 @@ async function enqueueScheduledWork(env) {
       queueMessages++;
     }
 
-    const reminderSubscriber = await env.DB.prepare(
-      "SELECT 1 AS ok FROM push_subscriptions WHERE active=1 AND reminder_minutes IN (15,30,60) LIMIT 1",
-    ).first();
-    if (reminderSubscriber) await env.SYNC_QUEUE.send({ type: "lesson-reminders", after_endpoint: "" });
+    // Run the first reminder page directly from the cron. This avoids one Queue
+    // message every minute in the common case (<= 40 reminder subscribers),
+    // while preserving Queue-based continuation when the subscriber set grows.
+    const reminderResult = await sendLessonReminders(env, "");
+    if (reminderResult.next_endpoint) {
+      await env.SYNC_QUEUE.send({ type: "lesson-reminders", after_endpoint: reminderResult.next_endpoint });
+    }
   } catch (err) {
     errors++;
     console.error("scheduled enqueue", err);
