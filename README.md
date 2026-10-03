@@ -1,122 +1,77 @@
-# TUS Companion — Cloud v14
+# TUS Companion — v16
 
-PWA indipendente per gli orari TUS Athlone. Gli studenti scelgono Department e Student Group una volta; non inseriscono credenziali TUS/Microsoft nell'app.
+PWA indipendente per gli orari TUS Athlone. Lo studente sceglie Department e Student Group una volta; l'app non richiede credenziali TUS/Microsoft.
 
-## Architettura v14
-
-La v14 non richiede Oracle, VPS, DuckDNS, dominio personale o un PC acceso 24/7.
+## Architettura attuale
 
 ```text
-TUS / Microsoft
+TUS / Scientia
       ↓
-GitHub Actions (collector Playwright, circa ogni 5 min)
+Cloudflare Worker scheduled task
       ↓
-Cloudflare Worker + D1
+Cloudflare Queue (sync timetable) + Browser (recupero sessione)
       ↓
-https://tus-companion.<account>.workers.dev
+Cloudflare D1
       ↓
-PWA degli studenti
+Worker API + PWA
 ```
 
-- **Cloudflare Worker** pubblica frontend/API in HTTPS su `workers.dev`.
-- **Cloudflare D1** conserva catalogo, ultimo timetable, modifiche, stato sync e sottoscrizioni push; alla prima creazione lo script richiede la giurisdizione `eu` per mantenere il database nell’Unione Europea.
-- **GitHub Actions** esegue il collector Playwright su un runner Linux temporaneo. Il collector interroga i gruppi attivi in sequenza perché Scientia conserva la selezione del timetable nella sessione server-side.
-- La sessione TUS centrale viene salvata in D1 **solo cifrata AES-GCM**. La chiave di cifratura è un GitHub Actions Secret e non viene salvata nel database Cloudflare.
-- Il repository GitHub viene creato **pubblico** per usare i runner standard pubblici senza il normale monte-minuti dei repository privati. I segreti non vengono committati.
+- Il Worker serve frontend e API HTTPS.
+- D1 conserva catalogo, snapshot, modifiche, stato sync e sottoscrizioni push.
+- Le sincronizzazioni dei gruppi attivi sono idonee circa ogni **2 minuti**.
+- I reminder ordinari vengono valutati direttamente dal cron; la Queue resta per sync e continuation jobs necessari.
+- Non viene più pre-caricato continuamente il catalogo dei gruppi non usati.
+- GitHub Actions esegue test automatici, deploy e verifica live.
 
-## Mettila online: un comando
+## Funzioni v16
 
-Dalla cartella del progetto:
+- Today e Week responsive;
+- push per cambi di aula/orario/classe;
+- reminder 15/30/60 minuti;
+- timetable offline con ultimo snapshot salvato sul dispositivo;
+- ricerca testuale del corso/gruppo;
+- feed calendario ICS per Apple Calendar, Outlook e Google Calendar tramite URL;
+- campus map Mappedin;
+- rate limiting best-effort sugli endpoint pubblici mutanti;
+- test Playwright desktop/mobile/offline prima del deploy.
 
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\GO-LIVE.ps1
+## Test
+
+La pipeline esegue:
+```bash
+node --test tests/calendar.test.mjs
+npx playwright test
 ```
 
-`GO-LIVE.ps1`:
+I test verificano overflow, etichette orarie, vista Week mobile, ricerca corso, modalità offline e feed calendario. Il deploy parte solo dopo il superamento dei test.
 
-1. verifica/installa Git, GitHub CLI e Node.js LTS tramite `winget` se mancanti;
-2. usa la sessione TUS centrale già presente (oppure apre il normale login TUS/Microsoft se manca);
-3. apre il login Cloudflare nel browser quando necessario;
-4. crea D1, applica lo schema e distribuisce Worker + PWA su `workers.dev`;
-5. genera e conserva in locale le chiavi tecniche necessarie senza stamparle;
-6. cifra e carica la sessione TUS centrale;
-7. apre il login GitHub nel browser quando necessario;
-8. crea un repository pubblico, configura gli Actions Secrets e avvia il primo aggiornamento del catalogo;
-9. stampa il link pubblico finale, `/health`, repository e pagina Actions.
+## Offline
 
-Non incollare in chat token, cookie, chiavi private, `.cloud.local.json` o file della sessione TUS.
+L'ultimo snapshot valido viene salvato nel browser. Se rete o API non sono raggiungibili, l'app mostra il timetable salvato e segnala chiaramente la modalità offline/cached. Al ritorno della connessione tenta un refresh automatico.
 
-## Dopo il deploy
+## Calendario
 
-Il PC personale può essere spento. Il sito e D1 restano su Cloudflare e il collector viene avviato da GitHub Actions. La pianificazione mira a circa cinque minuti, ma GitHub può ritardare una esecuzione programmata: non è un timer real-time.
+Ogni gruppo sincronizzato espone:
+```text
+/api/calendar/<group-id>.ics
+```
+Il feed restituisce le settimane disponibili nello snapshot cloud corrente.
 
-Quando un gruppo viene selezionato per la prima volta, il primo snapshot può quindi richiedere alcuni minuti. Le notifiche push successive vengono inviate dal collector quando rileva una modifica.
+## Operatività
 
-## Se la sessione TUS scade
+Il PC personale può restare spento. Stato pubblico:
+```text
+https://tus-companion.tusathlone.workers.dev/health
+```
 
-Sul PC amministratore esegui:
-
+Per una nuova autenticazione TUS interattiva:
 ```powershell
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\RECONNECT-AND-PUBLISH.ps1
 ```
 
-Completa solo il normale login Microsoft/MFA nella finestra che si apre. Lo script cifra il nuovo `storage_state` e lo pubblica nel cloud. Non serve ridistribuire l'app.
-
-## Segreti che non devono finire su GitHub
-
-`.gitignore` esclude almeno:
-
-```text
-.cloud.local.json
-backend/.tus-session/
-backend/.tus-browser-profile/
-backend/data/
-backend/secrets/
-backend/fixtures/
-backend/.venv/
-config.ps1
-cloud/worker/.wrangler/
-cloud/worker/.dev.vars
-cloud/worker/.env
-```
-
-`GO-LIVE.ps1` fa inoltre un controllo dei file staged prima del primo commit e si ferma se trova un percorso sensibile.
-
-## Modalità locale
-
-La vecchia modalità FastAPI locale resta disponibile per sviluppo/test:
-
-```powershell
-.\run.ps1
-```
-
-Apre `http://127.0.0.1:8000`. Non è necessaria per mantenere online la v14 Cloud.
-
-## Test
-
-Backend:
-
-```powershell
-cd backend
-.\.venv\Scripts\python.exe -m pytest -q
-```
-
-Controllo cloud pubblico dopo il deploy:
-
-```text
-https://<tuo-worker>.workers.dev/health
-```
-
-## Note operative
-
-- Il collector usa una sola sessione TUS centrale e sincronizza per **Student Group**, non per studente.
-- Vengono interrogati solo i gruppi con interesse recente o con notifiche push attive.
-- D1 conserva un solo snapshot corrente per gruppo e non riscrive l'intero timetable quando il payload non cambia.
-- Il catalogo TUS viene aggiornato periodicamente.
-- Un piccolo workflow mensile crea attività nel repository per evitare la disattivazione automatica degli scheduled workflow pubblici dopo lunghi periodi senza attività.
+Non committare token, cookie, chiavi private, `.cloud.local.json`, file di sessione o `.dev.vars`.
 
 ## Stato legale
 
-TUS Companion è un progetto indipendente e non ufficiale, non affiliato, approvato, sponsorizzato o autorizzato da TUS. Il sistema ufficiale TUS resta la fonte autorevole. La presenza di un disclaimer non sostituisce la verifica dei termini applicabili prima di una distribuzione pubblica ampia.
+TUS Companion è indipendente e non ufficiale, non affiliato, approvato, sponsorizzato o autorizzato da TUS. Il sistema ufficiale TUS resta la fonte autorevole.

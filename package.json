@@ -1,0 +1,12 @@
+{
+  "name": "tus-companion-regression-tests",
+  "private": true,
+  "version": "16.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/calendar.test.mjs && playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.0"
+  }
+}

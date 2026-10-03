@@ -5,6 +5,8 @@ const PREFS='tus-companion-preferences-v3';
 const LEGAL_ACK='tus-companion-legal-ack-v1';
 const INSTALL_DISMISSED='tus-companion-install-dismissed-v1';
 const NOTIFY_ONBOARDING='tus-companion-notify-onboarding-v1';
+const OFFLINE_CACHE='tus-companion-offline-v1';
+const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
@@ -32,10 +34,24 @@ function subjectHash(name){let h=2166136261;for(const ch of subjectKey(name)){h^
 function subjectColor(name){return SUBJECT_PALETTE[subjectHash(name)%SUBJECT_PALETTE.length]}
 function subjectStyle(name){const c=subjectColor(name);return `--subject-bg:${c.bg};--subject-border:${c.border};--subject-accent:${c.accent};--subject-ink:${c.ink};--subject-room:${c.room}`}
 
+function readOfflineTimetable(groupId){
+  if(!groupId)return null;
+  try{const cached=JSON.parse(localStorage.getItem(OFFLINE_CACHE)||'null');return cached?.group_id===groupId&&cached?.snapshot?cached:null}catch{return null}
+}
+function saveOfflineTimetable(){
+  if(!state.selection?.group||!state.snapshot)return;
+  const savedAt=new Date().toISOString();
+  try{localStorage.setItem(OFFLINE_CACHE,JSON.stringify({group_id:state.selection.group,saved_at:savedAt,snapshot:state.snapshot,sync:state.sync,changes:state.changes}));state.offlineSavedAt=savedAt}catch{}
+}
+function readCatalogCache(){try{return JSON.parse(localStorage.getItem(CATALOG_CACHE)||'[]')}catch{return []}}
+function saveCatalogCache(){try{localStorage.setItem(CATALOG_CACHE,JSON.stringify(state.catalog||[]))}catch{}}
+
 let deferredInstallPrompt=null;
 let lastWatchAt=0;
 let lastLoadAt=0;
-let state={catalog:[],selection:readSelection(),snapshot:null,changes:[],sync:null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:''};
+const initialSelection=readSelection();
+const initialOffline=readOfflineTimetable(initialSelection?.group);
+let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline),offlineSavedAt:initialOffline?.saved_at||null};
 
 class ApiError extends Error{
   constructor(status,detail,raw=''){super(detail||raw||`Request failed (${status})`);this.status=status;this.detail=detail;this.raw=raw}
@@ -99,6 +115,7 @@ function nextClassContext(e){
   return eventWeekday(e);
 }
 function syncDisplay(){
+  if(state.offline||state.usingCached){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`${state.offline?'Offline':'Cached'}${saved?` · saved ${saved}`:''}`}}
   const last=state.sync?.last_success_at,status=state.sync?.status;
   if(!last)return {updated:status==='syncing'?'Updating…':status==='error'?'Sync delayed':''};
   const age=Date.now()-new Date(last).getTime();
@@ -112,20 +129,14 @@ function card(e){const live=isCurrentEvent(e);return `<article class="class-card
 function nav(){return `<nav>${[['today','Today'],['week','Week'],['changes','Changes'],['settings','Settings']].map(([k,l])=>`<button data-tab="${k}" class="${state.tab===k?'active':''}">${l}</button>`).join('')}</nav>`}
 
 function setup(){
-  APP.innerHTML=`<main class="setup"><div class="brandmark">T</div><p class="kicker">TUS ATHLONE</p><h1>Your timetable,<br/>without the hassle.</h1><p class="lead">Pick your course once. We keep the timetable synced and surface room and time changes.</p><label>Department<select id="dep"><option value="">Choose department</option>${state.catalog.map(d=>`<option value="${esc(d.id)}">${esc(d.label)}</option>`).join('')}</select></label><label>Course / group<select id="grp" disabled><option value="">Choose course</option></select></label><button id="save" class="cta" disabled>Use this timetable</button>${state.error?`<div class="setup-error">${esc(state.error)}</div>`:''}<p class="privacy">No TUS password is requested by this app.</p><p class="legal-consent">By continuing, you acknowledge the <button data-legal="terms">Terms of Use</button> and <button data-legal="privacy">Privacy Notice</button>.</p></main>${renderOverlays()}`;
-  const dep=document.getElementById('dep'),grp=document.getElementById('grp'),save=document.getElementById('save');
-  dep.onchange=()=>{const d=state.catalog.find(x=>x.id===dep.value);grp.innerHTML='<option value="">Choose course</option>'+((d?.groups||[]).map(g=>`<option value="${esc(g.id)}">${esc(g.label)}</option>`).join(''));grp.disabled=!dep.value;save.disabled=true};
-  grp.onchange=()=>save.disabled=!(dep.value&&grp.value);
-  save.onclick=async()=>{
-    const d=state.catalog.find(x=>x.id===dep.value);const g=d?.groups?.find(x=>x.id===grp.value);
-    state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};
-    localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);
-    state.snapshot=null;state.changes=[];state.weekDate=null;state.weekStart=null;state.error='';state.sync={status:'queued'};
-    await updateExistingSubscription();render();await watchAndLoad(true);render();
-  };
+  APP.innerHTML=`<main class="setup"><div class="brandmark">T</div><p class="kicker">TUS ATHLONE</p><h1>Your timetable,<br/>without the hassle.</h1><p class="lead">Pick your course once. We keep the timetable synced and surface room and time changes.</p><label>Department<select id="dep"><option value="">Choose department</option>${state.catalog.map(d=>`<option value="${esc(d.id)}">${esc(d.label)}</option>`).join('')}</select></label><label>Find course / group<input id="course-search" type="search" placeholder="Type a course name…" autocomplete="off" disabled /></label><label>Course / group<select id="grp" disabled><option value="">Choose course</option></select></label><button id="save" class="cta" disabled>Use this timetable</button>${state.error?`<div class="setup-error">${esc(state.error)}</div>`:''}<p class="privacy">No TUS password is requested by this app.</p><p class="legal-consent">By continuing, you acknowledge the <button data-legal="terms">Terms of Use</button> and <button data-legal="privacy">Privacy Notice</button>.</p></main>${renderOverlays()}`;
+  const dep=document.getElementById('dep'),search=document.getElementById('course-search'),grp=document.getElementById('grp'),save=document.getElementById('save');
+  const refreshGroups=()=>{const d=state.catalog.find(x=>x.id===dep.value),q=String(search.value||'').trim().toLowerCase(),groups=(d?.groups||[]).filter(g=>!q||String(g.label||'').toLowerCase().includes(q));grp.innerHTML='<option value="">Choose course</option>'+groups.map(g=>`<option value="${esc(g.id)}">${esc(g.label)}</option>`).join('');grp.disabled=!dep.value;save.disabled=true};
+  dep.onchange=()=>{search.value='';search.disabled=!dep.value;refreshGroups();if(dep.value)search.focus()};
+  search.oninput=refreshGroups;grp.onchange=()=>save.disabled=!(dep.value&&grp.value);
+  save.onclick=async()=>{const d=state.catalog.find(x=>x.id===dep.value),g=d?.groups?.find(x=>x.id===grp.value);state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);state.snapshot=null;state.changes=[];state.weekDate=null;state.weekStart=null;state.error='';state.sync={status:'queued'};state.usingCached=false;state.offlineSavedAt=null;await updateExistingSubscription();render();await watchAndLoad(true);render()};
   bindCommon();
 }
-
 function syncCopy(){
   const status=state.sync?.status||'never-synced';
   if(status==='error')return {title:'Timetable temporarily unavailable',body:'We could not refresh the source just now. Your course choice is safe and the service will retry automatically.',kind:'error'};
@@ -145,7 +156,8 @@ function render(){
   const title=state.tab==='today'?'Today':state.tab==='week'?weekPageTitle():state.tab==='changes'?'Changes':'Settings';
   let body=state.tab==='today'?renderToday():state.tab==='week'?renderWeek():state.tab==='changes'?renderChanges():renderSettings();
   const syncUi=syncDisplay();
-  APP.innerHTML=`<main class="app ${state.tab==='week'?'week-app':''}"><header><div><p class="kicker">TUS ATHLONE</p><h1>${title}</h1></div><div class="header-status">${esc(syncUi.updated)}</div></header>${body}${nav()}</main>${renderOverlays()}${state.toast?`<div class="toast" role="status">${esc(state.toast)}</div>`:''}`;
+  const cacheBanner=(state.offline||state.usingCached)?`<div class="offline-banner" role="status"><b>${state.offline?'Offline mode':'Saved timetable'}</b><span>${state.offlineSavedAt?`Showing data saved ${esc(formatDetected(state.offlineSavedAt))}.`:'Showing the last timetable saved on this device.'} Changes will refresh automatically when the service is reachable.</span></div>`:'';
+  APP.innerHTML=`<main class="app ${state.tab==='week'?'week-app':''}"><header><div><p class="kicker">TUS ATHLONE</p><h1>${title}</h1></div><div class="header-status">${esc(syncUi.updated)}</div></header>${cacheBanner}${body}${nav()}</main>${renderOverlays()}${state.toast?`<div class="toast" role="status">${esc(state.toast)}</div>`:''}`;
   bindCommon();
 }
 
@@ -300,12 +312,14 @@ function renderChanges(){
 }
 function pushStatusText(){if(!state.push.supported)return 'Not supported in this browser';if(state.push.permission==='denied')return 'Blocked by browser settings';if(state.push.subscribed)return 'Enabled on this device';return 'Off on this device'}
 function installSummary(){const d=deviceInfo();if(d.standalone)return 'Installed on this device';if(d.ios)return 'Add to Home Screen from Safari';if(d.android)return deferredInstallPrompt?'Ready to install':'Install from your browser menu';return deferredInstallPrompt?'Ready to install':'Use the install icon in Chrome/Edge'}
+function calendarFeedUrl(){return `${location.origin}/api/calendar/${encodeURIComponent(state.selection?.group||'')}.ics`}
 function renderSettings(){
   const hidden=hiddenModules(),mods=[...new Set((state.snapshot.events||[]).map(e=>e.module))].sort(),device=deviceInfo();
   const installCard=device.standalone?'':`<div class="setting-card"><div><h3>Install app</h3><p>${esc(installSummary())}</p></div><button id="install-app" class="small-ghost">How to install</button></div>`;
   const reminderMinutes=Number(state.prefs.reminderMinutes||0);
   const reminderCard=`<div class="setting-card reminder-card"><div><h3>Class reminders</h3><p>Get one reminder before each class you attend. Hidden modules are excluded.</p></div><div class="segmented reminder-segmented">${[[0,'Off'],[15,'15m'],[30,'30m'],[60,'60m']].map(([v,l])=>`<button data-reminder="${v}" class="${reminderMinutes===v?'selected':''}">${l}</button>`).join('')}</div></div>`;
-  return `<section class="settings"><div class="setting-card"><div><h3>Notifications</h3><p>${esc(pushStatusText())}. Receive room, time and class-change alerts.</p></div><div class="setting-actions">${state.push.subscribed?'<button class="small-primary" disabled aria-disabled="true">Enabled</button><button id="test-push" class="small-ghost">Test</button><button id="disable-push" class="small-ghost danger">Disable</button>':'<button id="notify" class="small-primary">Enable</button>'}</div></div>${installCard}${reminderCard}<div class="setting-card"><div><h3>Time format</h3><p>Choose how class times are displayed.</p></div><div class="segmented"><button data-time="24" class="${state.prefs.timeFormat==='24'?'selected':''}">24-hour</button><button data-time="12" class="${state.prefs.timeFormat==='12'?'selected':''}">AM/PM</button></div></div><div class="setting-card"><div><h3>Campus map</h3><p>Room buttons open the selected room in the official TUS Mappedin viewer in a separate page. The app does not request your location or start a route automatically.</p></div><a class="small-ghost settings-link" href="${MAP}" target="_blank" rel="noopener noreferrer">Open campus map ↗</a></div><button id="change" class="ghost">Change course</button><p>Selected group: <b>${esc(state.selection.groupLabel||state.selection.group)}</b></p><div class="module-box"><h3>My modules</h3><p>Hide alternatives you do not attend. Hidden modules are also excluded from future push alerts on this device.</p>${mods.map(m=>`<label class="module-row"><input type="checkbox" data-module="${esc(m)}" ${hidden.has(m)?'':'checked'}><span>${esc(m)}</span></label>`).join('')}</div><div class="legal-footer"><p><strong>Unofficial independent app.</strong> Not affiliated with, endorsed by, or authorized by Technological University of the Shannon (TUS). For student convenience only. Always verify critical timetable information using official TUS systems.</p><div><button data-legal="terms">Terms of Use</button><span>·</span><button data-legal="privacy">Privacy Notice</button></div><small>Opening a room leaves TUS Companion and sends that room identifier to the official Mappedin campus viewer.</small></div></section>`;
+  const calUrl=calendarFeedUrl(),calendarCard=`<div class="setting-card calendar-card"><div><h3>Add to calendar</h3><p>Subscribe in Apple Calendar or Outlook so the feed refreshes as the timetable changes. For Google Calendar, copy the URL and add it under Other calendars → From URL.</p></div><div class="setting-actions"><button id="calendar-subscribe" class="small-primary" data-calendar-url="${esc(calUrl)}">Subscribe</button><button id="calendar-copy" class="small-ghost" data-calendar-url="${esc(calUrl)}">Copy URL</button></div></div>`;
+  return `<section class="settings"><div class="setting-card"><div><h3>Notifications</h3><p>${esc(pushStatusText())}. Receive room, time and class-change alerts.</p></div><div class="setting-actions">${state.push.subscribed?'<button class="small-primary" disabled aria-disabled="true">Enabled</button><button id="test-push" class="small-ghost">Test</button><button id="disable-push" class="small-ghost danger">Disable</button>':'<button id="notify" class="small-primary">Enable</button>'}</div></div>${installCard}${reminderCard}${calendarCard}<div class="setting-card"><div><h3>Time format</h3><p>Choose how class times are displayed.</p></div><div class="segmented"><button data-time="24" class="${state.prefs.timeFormat==='24'?'selected':''}">24-hour</button><button data-time="12" class="${state.prefs.timeFormat==='12'?'selected':''}">AM/PM</button></div></div><div class="setting-card"><div><h3>Campus map</h3><p>Room buttons open the selected room in the official TUS Mappedin viewer in a separate page. The app does not request your location or start a route automatically.</p></div><a class="small-ghost settings-link" href="${MAP}" target="_blank" rel="noopener noreferrer">Open campus map ↗</a></div><button id="change" class="ghost">Change course</button><p>Selected group: <b>${esc(state.selection.groupLabel||state.selection.group)}</b></p><div class="module-box"><h3>My modules</h3><p>Hide alternatives you do not attend. Hidden modules are also excluded from future push alerts on this device.</p>${mods.map(m=>`<label class="module-row"><input type="checkbox" data-module="${esc(m)}" ${hidden.has(m)?'':'checked'}><span>${esc(m)}</span></label>`).join('')}</div><div class="legal-footer"><p><strong>Unofficial independent app.</strong> Not affiliated with, endorsed by, or authorized by Technological University of the Shannon (TUS). For student convenience only. Always verify critical timetable information using official TUS systems.</p><div><button data-legal="terms">Terms of Use</button><span>·</span><button data-legal="privacy">Privacy Notice</button></div><small>Opening a room leaves TUS Companion and sends that room identifier to the official Mappedin campus viewer.</small></div></section>`;
 }
 
 function renderOverlays(){return `${state.installModal?renderInstallModal():''}${state.notifyModal?renderNotifyModal():''}${state.legal?renderLegalModal(state.legal):''}`}
@@ -337,10 +351,12 @@ function bindCommon(){
   const install=document.getElementById('install-app');if(install)install.onclick=()=>{state.installModal=true;render()};
   const native=document.getElementById('install-native');if(native)native.onclick=triggerNativeInstall;
   const later=document.getElementById('install-later');if(later)later.onclick=()=>{localStorage.setItem(INSTALL_DISMISSED,String(Date.now()));state.installModal=false;render()};
+  const calSubscribe=document.getElementById('calendar-subscribe');if(calSubscribe)calSubscribe.onclick=()=>{const u=new URL(calSubscribe.dataset.calendarUrl||calendarFeedUrl());location.href=`webcal://${u.host}${u.pathname}`};
+  const calCopy=document.getElementById('calendar-copy');if(calCopy)calCopy.onclick=async()=>{const value=calCopy.dataset.calendarUrl||calendarFeedUrl();try{await navigator.clipboard.writeText(value);toast('Calendar URL copied.')}catch{window.prompt('Copy this calendar URL:',value)}};
   const change=document.getElementById('change');if(change)change.onclick=changeCourse;
 }
 
-function changeCourse(){localStorage.removeItem(STORE);state.selection=null;state.snapshot=null;state.changes=[];state.sync=null;state.weekDate=null;state.weekStart=null;state.error='';render()}
+function changeCourse(){localStorage.removeItem(STORE);state.selection=null;state.snapshot=null;state.changes=[];state.sync=null;state.weekDate=null;state.weekStart=null;state.error='';state.usingCached=false;state.offlineSavedAt=null;render()}
 function toast(message){state.toast=message;render();setTimeout(()=>{if(state.toast===message){state.toast='';render()}},2800)}
 function deviceInfo(){const ua=navigator.userAgent||'',ios=/iPad|iPhone|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1),android=/Android/i.test(ua),standalone=window.matchMedia?.('(display-mode: standalone)').matches||window.navigator.standalone===true;return {ios,android,desktop:!ios&&!android,standalone}}
 function shouldAutoOfferInstall(){const d=deviceInfo();if(d.standalone)return false;const last=Number(localStorage.getItem(INSTALL_DISMISSED)||0);return !last||Date.now()-last>14*24*60*60*1000}
@@ -392,42 +408,21 @@ async function testNotification(){try{const reg=await navigator.serviceWorker.re
 async function disableNotifications(){try{const reg=await navigator.serviceWorker.ready,sub=await reg.pushManager.getSubscription();if(sub){await api('/api/push/unsubscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})}).catch(()=>{});await sub.unsubscribe()}await refreshPushStatus();toast('Notifications turned off.')}catch(e){toast(e.message||String(e))}}
 
 async function watchAndLoad(forceWatch=false){
-  if(!state.selection||state.refreshing)return;
-  state.refreshing=true;
+  if(!state.selection||state.refreshing)return;state.refreshing=true;
   try{
     let w=null;
-    if(forceWatch||!lastWatchAt||Date.now()-lastWatchAt>30*60*1000){
-      w=await api('/api/watch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({department_id:state.selection.department,group_id:state.selection.group})});
-      lastWatchAt=Date.now();
-    }
-    if(w?.sync)state.sync=w.sync;
-    try{
-      const t=await api('/api/timetable/'+encodeURIComponent(state.selection.group));state.snapshot=t.snapshot;state.sync=t.sync||state.sync;
-      try{const allChanges=await api('/api/changes/'+encodeURIComponent(state.selection.group));state.changes=(Array.isArray(allChanges)?allChanges:[]).filter(c=>!c?.detected_at||String(c.detected_at)>CHANGES_RESET_AT)}catch{}
-      state.error='';
-    }catch(e){
-      if(e instanceof ApiError&&e.status===404&&e.detail==='not-synced-yet'){state.snapshot=null;try{state.sync=await api('/api/sync-status/'+encodeURIComponent(state.selection.group))}catch{}state.error=''}
-      else state.error='We could not contact the timetable service. It will retry automatically.';
-    }
-  }catch{state.error='The timetable service is temporarily unavailable. Your course selection is still saved.'}
+    try{if(forceWatch||!lastWatchAt||Date.now()-lastWatchAt>30*60*1000){w=await api('/api/watch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({department_id:state.selection.department,group_id:state.selection.group})});lastWatchAt=Date.now()}if(w?.sync)state.sync=w.sync}catch(e){if(!state.snapshot)throw e}
+    try{const t=await api('/api/timetable/'+encodeURIComponent(state.selection.group));state.snapshot=t.snapshot;state.sync=t.sync||state.sync;try{const allChanges=await api('/api/changes/'+encodeURIComponent(state.selection.group));state.changes=(Array.isArray(allChanges)?allChanges:[]).filter(c=>!c?.detected_at||String(c.detected_at)>CHANGES_RESET_AT)}catch{}state.error='';state.offline=false;state.usingCached=false;saveOfflineTimetable()}
+    catch(e){state.offline=!navigator.onLine;if(e instanceof ApiError&&e.status===404&&e.detail==='not-synced-yet'){if(!state.snapshot){try{state.sync=await api('/api/sync-status/'+encodeURIComponent(state.selection.group))}catch{}state.error=''}else state.usingCached=true}else if(state.snapshot){state.usingCached=true;state.error=''}else state.error='We could not contact the timetable service. It will retry automatically.'}
+  }catch{state.offline=!navigator.onLine;state.usingCached=!!state.snapshot;if(!state.snapshot)state.error='The timetable service is temporarily unavailable. Your course selection is still saved.'}
   finally{state.refreshing=false;lastLoadAt=Date.now()}
 }
-
 async function refreshLoop(){if(state.selection){await watchAndLoad(false);await refreshPushStatus();render()}setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS)}
 async function init(){
-  const di=deviceInfo();document.documentElement.classList.toggle('ios-standalone',di.ios&&di.standalone);
-  try{const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta').catch(()=>null)]);state.catalog=c.departments||[];state.meta=m;if(!state.catalog.length)state.error='Course catalogue is still being prepared. Try again in a few minutes.'}catch{state.error='Could not load the course catalogue from the service.'}
-  if('serviceWorker'in navigator){
-    try{
-      const reg=await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});
-      await reg.update().catch(()=>{});
-      if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
-    }catch{}
-  }
-  await refreshPushStatus();
-  if(state.selection)await watchAndLoad(true);
-  if(state.selection&&state.snapshot){setTimeout(()=>{if(shouldAutoOfferInstall()){state.installModal=true;render()}else if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},900);}
-  render();setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS);
+  const di=deviceInfo();document.documentElement.classList.toggle('ios-standalone',di.ios&&di.standalone);if(state.selection&&state.snapshot)render();
+  try{const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta').catch(()=>null)]);if(Array.isArray(c?.departments)&&c.departments.length){state.catalog=c.departments;saveCatalogCache()}state.meta=m;if(!state.catalog.length)state.error='Course catalogue is still being prepared. Try again in a few minutes.'}catch{if(!state.catalog.length)state.error='Could not load the course catalogue from the service.'}
+  if('serviceWorker'in navigator){try{const reg=await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});await reg.update().catch(()=>{});if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'})}catch{}}
+  await refreshPushStatus();if(state.selection)await watchAndLoad(true);if(state.selection&&state.snapshot){setTimeout(()=>{if(shouldAutoOfferInstall()){state.installModal=true;render()}else if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},900)}render();setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS);
 }
 function temporalUiSignature(){
   if(!state.snapshot)return '';
@@ -441,6 +436,9 @@ setInterval(()=>{
   const signature=temporalUiSignature();
   if(signature!==lastTemporalUiSignature){lastTemporalUiSignature=signature;render()}
 },UI_TIME_REFRESH_MS);
+
+window.addEventListener('offline',()=>{state.offline=true;state.usingCached=!!state.snapshot;render()});
+window.addEventListener('online',()=>{state.offline=false;if(state.selection)watchAndLoad(true).then(refreshPushStatus).then(render).catch(()=>render())});
 
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'&&state.selection&&Date.now()-lastLoadAt>30*1000){

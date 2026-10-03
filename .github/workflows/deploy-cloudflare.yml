@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v15.4.12
+name: Deploy Cloudflare Worker v16.0.0
 
 on:
   workflow_dispatch:
@@ -7,6 +7,9 @@ on:
     paths:
       - "frontend/**"
       - "cloud/worker/**"
+      - "tests/**"
+      - "package.json"
+      - "playwright.config.js"
       - ".github/workflows/deploy-cloudflare.yml"
 
 permissions:
@@ -73,15 +76,42 @@ jobs:
           )"
           echo "public_key=$pub" >> "$GITHUB_OUTPUT"
 
+      - name: Setup Node for regression tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Check deployment source
         shell: bash
         run: |
           set -euo pipefail
           node --check cloud/worker/src/index.js
+          node --check cloud/worker/src/calendar.js
           node --check cloud/worker/src/scientia.js
           node --check cloud/worker/src/timetable.js
           node --check frontend/app.js
           node --check frontend/sw.js
+
+      - name: Install regression-test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Run unit and browser regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test tests/calendar.test.mjs
+          python3 -m http.server 4173 --directory frontend >/tmp/tus-companion-http.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 0.25
+          done
+          npx playwright test
 
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v4
@@ -119,7 +149,7 @@ jobs:
           for attempt in $(seq 1 12); do
             health="$(curl --fail --silent --show-error "$base/health")"
             live_version="$(printf '%s\n' "$health" | jq -r '.version // ""')"
-            if [ "$live_version" = "1.8.11-cloud" ]; then
+            if [ "$live_version" = "1.9.0-cloud" ]; then
               version_ok=true
               break
             fi

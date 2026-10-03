@@ -2,31 +2,45 @@ import webpush from "web-push";
 import { launch } from "@cloudflare/playwright";
 import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
+import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.8.11-cloud";
+const APP_VERSION = "1.9.0-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
 const CATALOG_REFRESH_HOURS = 24;
-const GROUP_SYNC_MIN_SECONDS = 50;
+const GROUP_SYNC_MIN_SECONDS = 120;
 const QUEUED_STALE_MINUTES = 5;
 const GROUPS_PER_QUEUE_JOB = 7;
 const MAX_SCHEDULED_QUEUE_MESSAGES = 1;
-const PRELOAD_GROUPS_PER_CYCLE = 1;
-const PRELOAD_ERROR_RETRY_HOURS = 6;
 const PUSH_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_WINDOW_MINUTES = 3;
 const SOURCE_BROWSER_RECOVERY_MINUTES = 10;
 const SOURCE_BROWSER_RECOVERY_TIMEOUT_MS = 45_000;
 const NEXT_WEEK_REFRESH_MINUTES = 10;
-const FUTURE_WEEK_COUNT = 6;
-const FUTURE_WEEK_REFRESH_HOURS = 6;
-const FUTURE_WEEK_QUEUE_COOLDOWN_MINUTES = 10;
 const MAP_URL = "https://app.mappedin.com/map/68b1b5dd74254a000bbf174b";
 const SESSION_AAD = new TextEncoder().encode("tus-companion-source-session-v1");
 
 function nowIso() { return new Date().toISOString(); }
+
+const rateBuckets = new Map();
+function rateLimitExceeded(request, scope, limit = 60, windowMs = 60_000) {
+  const ip = request.headers.get("cf-connecting-ip") || request.headers.get("x-forwarded-for") || "unknown";
+  const key = `${scope}:${String(ip).split(",")[0].trim()}`;
+  const now = Date.now();
+  let bucket = rateBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) bucket = { count: 0, resetAt: now + windowMs };
+  bucket.count += 1;
+  rateBuckets.set(key, bucket);
+  if (rateBuckets.size > 4000) {
+    for (const [k, v] of rateBuckets) {
+      if (v.resetAt <= now) rateBuckets.delete(k);
+      if (rateBuckets.size <= 3000) break;
+    }
+  }
+  return bucket.count > limit;
+}
 
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
@@ -228,6 +242,23 @@ async function timetable(env, groupId) {
   return json({ snapshot, sync: sync || { group_id: groupId, status: "ok" } });
 }
 
+async function calendarFeed(request, env, groupId) {
+  const row = await env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
+  if (!row) return apiError(404, "not-synced-yet");
+  const snapshot = safeParse(row.payload, null);
+  if (!snapshot) return apiError(404, "not-synced-yet");
+  const origin = new URL(request.url).origin;
+  const body = buildCalendar({ groupId, groupLabel: snapshot.student_group || groupId, snapshot, origin });
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "text/calendar; charset=utf-8",
+      "cache-control": "no-store",
+      "content-disposition": `inline; filename="tus-companion-${String(groupId).replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 80)}.ics"`,
+    },
+  });
+}
+
 async function syncStatus(env, groupId) {
   const row = await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
   return json(row || { group_id: groupId, status: "never-synced", last_attempt_at: null, last_success_at: null, error: null });
@@ -330,24 +361,6 @@ async function activeGroups(env) {
   return res.results || [];
 }
 
-
-async function preloadCandidates(env, limit = PRELOAD_GROUPS_PER_CYCLE) {
-  const retryBefore = new Date(Date.now() - PRELOAD_ERROR_RETRY_HOURS * 3600_000).toISOString();
-  const res = await env.DB.prepare(
-    `SELECT g.id AS group_id,g.department_id,g.label,d.label AS department_label,st.last_attempt_at,st.status
-     FROM groups g
-     JOIN departments d ON d.id=g.department_id
-     LEFT JOIN latest_snapshots s ON s.group_id=g.id
-     LEFT JOIN sync_state st ON st.group_id=g.id
-     WHERE s.group_id IS NULL
-       AND (st.status IS NULL OR st.status <> 'error' OR st.last_attempt_at IS NULL OR st.last_attempt_at < ?)
-       AND (st.status IS NULL OR st.status NOT IN ('queued','syncing') OR st.last_attempt_at IS NULL OR st.last_attempt_at < ?)
-     ORDER BY CASE WHEN lower(d.label) LIKE '%business%' OR lower(g.label) LIKE '%business%' THEN 0 ELSE 1 END,
-              d.label,g.label
-     LIMIT ?`,
-  ).bind(retryBefore, new Date(Date.now() - QUEUED_STALE_MINUTES * 60_000).toISOString(), Math.max(0, Number(limit) || 0)).all();
-  return res.results || [];
-}
 
 async function adminSyncPlan(env) {
   const groups = await activeGroups(env);
@@ -821,114 +834,6 @@ async function sendLessonReminders(env, afterEndpoint = "") {
 
 
 
-function snapshotHasFutureEvent(snapshot) {
-  const clock = dublinClock();
-  return (Array.isArray(snapshot?.events) ? snapshot.events : []).some((event) => {
-    const date = String(event?.date || "");
-    if (date > clock.date) return true;
-    if (date < clock.date) return false;
-    const end = classStartMinute(event?.end);
-    return end >= clock.minuteOfDay;
-  });
-}
-
-function compactNextWeekSnapshot(snapshot) {
-  if (!snapshot) return null;
-  return {
-    week_number: snapshot.week_number ?? null,
-    week_start: snapshot.week_start ?? null,
-    week_end: snapshot.week_end ?? null,
-    fetched_at: snapshot.fetched_at ?? nowIso(),
-    events: Array.isArray(snapshot.events) ? snapshot.events : [],
-  };
-}
-
-
-function futureWeekMetaKey(groupId, suffix) {
-  return `future_weeks:${suffix}:${groupId}`;
-}
-
-async function futureWeekCacheDue(env, groupId, currentWeekNumber) {
-  const current = Number(currentWeekNumber || 0);
-  if (!Number.isFinite(current) || current <= 0) return false;
-  const first = current + 2;
-  const last = Math.min(52, current + FUTURE_WEEK_COUNT);
-  if (first > last) return false;
-  const expected = last - first + 1;
-  const row = await env.DB.prepare(
-    "SELECT COUNT(*) AS n, MIN(fetched_at) AS oldest FROM week_snapshots WHERE group_id=? AND week_number BETWEEN ? AND ?",
-  ).bind(groupId, first, last).first();
-  if (Number(row?.n || 0) < expected) return true;
-  return !row?.oldest || ageMs(row.oldest) >= FUTURE_WEEK_REFRESH_HOURS * 3600_000;
-}
-
-async function maybeQueueFutureWeeks(env, groupId, departmentId, currentWeekNumber) {
-  if (!(await futureWeekCacheDue(env, groupId, currentWeekNumber))) return false;
-  const key = futureWeekMetaKey(groupId, "last_enqueued");
-  const lastQueued = await getMetaValue(env, key);
-  if (lastQueued && ageMs(lastQueued) < FUTURE_WEEK_QUEUE_COOLDOWN_MINUTES * 60_000) return false;
-  await setMetaValue(env, key, nowIso());
-  await env.SYNC_QUEUE.send({
-    type: "future-weeks",
-    group_id: groupId,
-    department_id: departmentId,
-    current_week_number: Number(currentWeekNumber || 0),
-  });
-  return true;
-}
-
-async function saveFutureWeekSnapshot(env, groupId, snapshot) {
-  const weekNumber = Number(snapshot?.week_number || 0);
-  if (!weekNumber) return;
-  await env.DB.prepare(
-    "INSERT INTO week_snapshots(group_id,week_number,week_start,week_end,fetched_at,payload) VALUES(?,?,?,?,?,?) " +
-    "ON CONFLICT(group_id,week_number) DO UPDATE SET week_start=excluded.week_start,week_end=excluded.week_end,fetched_at=excluded.fetched_at,payload=excluded.payload",
-  ).bind(
-    groupId,
-    weekNumber,
-    snapshot.week_start || null,
-    snapshot.week_end || null,
-    snapshot.fetched_at || nowIso(),
-    JSON.stringify(snapshot),
-  ).run();
-}
-
-async function runFutureWeeksJob(env, body) {
-  const groupId = String(body?.group_id || "");
-  const departmentId = String(body?.department_id || "");
-  const currentWeekNumber = Number(body?.current_week_number || 0);
-  if (!groupId || !departmentId || !currentWeekNumber) throw new Error("invalid-future-weeks-job");
-
-  const storage = await loadSourceStorageState(env);
-  const scientia = new ScientiaSession(storage);
-  await setMetaValue(env, futureWeekMetaKey(groupId, "last_attempt"), nowIso());
-  try {
-    const first = currentWeekNumber + 2;
-    const last = Math.min(52, currentWeekNumber + FUTURE_WEEK_COUNT);
-    for (let weekNumber = first; weekNumber <= last; weekNumber++) {
-      const existing = await env.DB.prepare(
-        "SELECT fetched_at FROM week_snapshots WHERE group_id=? AND week_number=?",
-      ).bind(groupId, weekNumber).first();
-      if (existing?.fetched_at && ageMs(existing.fetched_at) < FUTURE_WEEK_REFRESH_HOURS * 3600_000) continue;
-
-      const html = await scientia.fetchTimetable(departmentId, groupId, String(weekNumber));
-      const snapshot = parseTextSpreadsheet(html);
-      snapshot.group_id = groupId;
-      snapshot.department_id = departmentId;
-      if (!snapshot.week_number) snapshot.week_number = weekNumber;
-      await saveFutureWeekSnapshot(env, groupId, compactNextWeekSnapshot(snapshot));
-    }
-    await saveSourceStorageState(env, scientia.storageState());
-    await setMetaValue(env, futureWeekMetaKey(groupId, "last_success"), nowIso());
-    await setMetaValue(env, futureWeekMetaKey(groupId, "last_error"), "");
-    return true;
-  } catch (err) {
-    try { await saveSourceStorageState(env, scientia.storageState()); } catch {}
-    await setMetaValue(env, futureWeekMetaKey(groupId, "last_error"), String(err?.message || err));
-    throw err;
-  }
-}
-
 async function markSyncing(env, groupId) {
   const stamp = nowIso();
   await env.DB.prepare(
@@ -1064,11 +969,7 @@ async function enqueueScheduledWork(env) {
       if (["queued", "syncing"].includes(g.status) && ageMs(g.last_attempt_at) < QUEUED_STALE_MINUTES * 60_000) return false;
       return !g.last_success_at || ageMs(g.last_success_at) >= GROUP_SYNC_MIN_SECONDS * 1000;
     });
-    const warm = await preloadCandidates(env, PRELOAD_GROUPS_PER_CYCLE);
-    const activeSlots = Math.max(0, GROUPS_PER_QUEUE_JOB - warm.length);
-    const selected = [...due.slice(0, activeSlots), ...warm]
-      .filter((g, index, all) => all.findIndex((x) => x.group_id === g.group_id) === index)
-      .slice(0, GROUPS_PER_QUEUE_JOB);
+    const selected = due.slice(0, GROUPS_PER_QUEUE_JOB);
     const stamp = nowIso();
     let queueMessages = 0;
     for (let i = 0; i < selected.length && queueMessages < MAX_SCHEDULED_QUEUE_MESSAGES; i += GROUPS_PER_QUEUE_JOB) {
@@ -1109,13 +1010,27 @@ async function route(request, env) {
   if (path === "/health" && request.method === "GET") return health(env);
   if (path === "/api/meta" && request.method === "GET") return json({ version: APP_VERSION, operator_name: env.OPERATOR_NAME || "Independent TUS Companion project", contact_email: env.CONTACT_EMAIL || "", legal_version: LEGAL_VERSION });
   if (path === "/api/catalog" && request.method === "GET") return catalog(env);
-  if (path === "/api/watch" && request.method === "POST") return publicWatch(request, env);
+  if (path === "/api/watch" && request.method === "POST") {
+    if (rateLimitExceeded(request, "watch", 60)) return json({ detail: "rate-limit" }, 429, { "retry-after": "60" });
+    return publicWatch(request, env);
+  }
   if (path === "/api/push/public-key" && request.method === "GET") return json({ publicKey: env.VAPID_PUBLIC_KEY || null });
-  if (path === "/api/push/subscribe" && request.method === "POST") return pushSubscribe(request, env);
-  if (path === "/api/push/unsubscribe" && request.method === "POST") return pushUnsubscribe(request, env);
-  if (path === "/api/push/test" && request.method === "POST") return pushTest(request, env);
+  if (path === "/api/push/subscribe" && request.method === "POST") {
+    if (rateLimitExceeded(request, "push-subscribe", 30)) return json({ detail: "rate-limit" }, 429, { "retry-after": "60" });
+    return pushSubscribe(request, env);
+  }
+  if (path === "/api/push/unsubscribe" && request.method === "POST") {
+    if (rateLimitExceeded(request, "push-unsubscribe", 30)) return json({ detail: "rate-limit" }, 429, { "retry-after": "60" });
+    return pushUnsubscribe(request, env);
+  }
+  if (path === "/api/push/test" && request.method === "POST") {
+    if (rateLimitExceeded(request, "push-test", 10)) return json({ detail: "rate-limit" }, 429, { "retry-after": "60" });
+    return pushTest(request, env);
+  }
 
-  let match = path.match(/^\/api\/timetable\/(.+)$/);
+  let match = path.match(/^\/api\/calendar\/(.+)\.ics$/);
+  if (match && request.method === "GET") return calendarFeed(request, env, decodeURIComponent(match[1]));
+  match = path.match(/^\/api\/timetable\/(.+)$/);
   if (match && request.method === "GET") return timetable(env, decodeURIComponent(match[1]));
   match = path.match(/^\/api\/changes\/(.+)$/);
   if (match && request.method === "GET") return changes(env, decodeURIComponent(match[1]), url);
@@ -1164,7 +1079,6 @@ export default {
       try {
         if (body.type === "catalog") await runCatalogJob(env);
         else if (body.type === "groups") await runGroupJob(env, body.groups || []);
-        else if (body.type === "future-weeks") { /* legacy v15.4.8 job: intentionally ignored */ }
         else if (body.type === "push-test") await sendTestPush(env, String(body.endpoint || ""));
         else if (body.type === "lesson-reminders") {
           const result = await sendLessonReminders(env, String(body.after_endpoint || ""));
