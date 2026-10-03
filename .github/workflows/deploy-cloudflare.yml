@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v16.1.0
+name: Deploy Cloudflare Worker v16.2.0
 
 on:
   workflow_dispatch:
@@ -149,7 +149,7 @@ jobs:
           for attempt in $(seq 1 12); do
             health="$(curl --fail --silent --show-error "$base/health")"
             live_version="$(printf '%s\n' "$health" | jq -r '.version // ""')"
-            if [ "$live_version" = "1.9.0-cloud" ]; then
+            if [ "$live_version" = "1.9.1-cloud" ]; then
               version_ok=true
               break
             fi
@@ -189,6 +189,45 @@ jobs:
           if [ "$ok" != "true" ]; then
             echo "The Worker deployed, but healthy scheduler/source-session state was not confirmed."
             curl --silent --show-error "$base/health" | jq .
+            exit 1
+          fi
+
+          echo "Checking a real timetable group end-to-end..."
+          smoke_group="AL_BBSTD_C_2 B"
+          smoke_department="$(curl --fail --silent --show-error "$base/api/catalog" | jq -r --arg gid "$smoke_group" '.departments[] | select(any(.groups[]?; .id == $gid)) | .id' | head -n1)"
+          if [ -z "$smoke_department" ]; then
+            echo "Smoke-test timetable group was not found in the live catalog."
+            exit 1
+          fi
+          curl --fail --silent --show-error \
+            -X POST "$base/api/watch" \
+            -H "Content-Type: application/json" \
+            --data "$(jq -nc --arg d "$smoke_department" --arg g "$smoke_group" '{department_id:$d,group_id:$g}')" >/dev/null
+          smoke_encoded="$(jq -rn --arg v "$smoke_group" '$v|@uri')"
+          smoke_ok=false
+          for attempt in $(seq 1 36); do
+            sync_json="$(curl --fail --silent --show-error "$base/api/sync-status/$smoke_encoded")"
+            smoke_status="$(printf '%s\n' "$sync_json" | jq -r '.status // ""')"
+            smoke_last="$(printf '%s\n' "$sync_json" | jq -r '.last_success_at // ""')"
+            smoke_error="$(printf '%s\n' "$sync_json" | jq -r '.error // ""')"
+            fresh=false
+            if [ -n "$smoke_last" ]; then
+              now_epoch="$(date +%s)"
+              last_epoch="$(date -d "$smoke_last" +%s 2>/dev/null || echo 0)"
+              if [ "$last_epoch" -gt 0 ] && [ $((now_epoch-last_epoch)) -le 600 ]; then fresh=true; fi
+            fi
+            if [ "$smoke_status" = "ok" ] && [ "$fresh" = "true" ]; then
+              echo "Real timetable sync confirmed: $smoke_group @ $smoke_last"
+              smoke_ok=true
+              break
+            fi
+            echo "Waiting for real timetable sync ($attempt/36): status=$smoke_status last=$smoke_last error=$smoke_error"
+            sleep 5
+          done
+          if [ "$smoke_ok" != "true" ]; then
+            echo "A real timetable group did not obtain a fresh successful sync."
+            curl --silent --show-error "$base/health" | jq .
+            curl --silent --show-error "$base/api/sync-status/$smoke_encoded" | jq .
             exit 1
           fi
 

@@ -15,6 +15,8 @@ const PENDING_REFRESH_MS=15*1000;
 const UI_TIME_REFRESH_MS=15*1000;
 const API_TIMEOUT_MS=9000;
 const RECOVERY_DELAYS_MS=[1500,4000,10000,30000];
+const PRIORITY_WATCH_AGE_MS=3*60*1000;
+const PRIORITY_WATCH_INTERVAL_MS=60*1000;
 const CHANGES_RESET_AT='2026-09-30T11:58:00.000Z';
 
 const SUBJECT_PALETTE=[
@@ -139,13 +141,22 @@ function nextClassContext(e){
   if(e.date===isoDateOffset(1))return 'TOMORROW';
   return eventWeekday(e);
 }
+function syncAgeMs(){
+  const last=state.sync?.last_success_at,ms=Date.parse(last||'');
+  return Number.isFinite(ms)?Date.now()-ms:Infinity;
+}
+function syncNeedsPriorityWatch(){
+  const status=state.sync?.status||'never-synced';
+  if(['error','never-synced'].includes(status))return true;
+  return syncAgeMs()>PRIORITY_WATCH_AGE_MS;
+}
 function syncDisplay(){
   if(state.offline){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Offline${saved?` · saved ${saved}`:''}`}}
   if(state.usingCached){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Reconnecting${saved?` · saved ${saved}`:''}`}}
-  const last=state.sync?.last_success_at,status=state.sync?.status;
-  if(!last)return {updated:status==='syncing'?'Updating…':status==='error'?'Sync delayed':''};
-  const age=Date.now()-new Date(last).getTime();
-  if(status==='syncing')return {updated:`Updating · ${formatClockDate(last)}`};
+  const last=state.sync?.last_success_at,status=state.sync?.status,age=syncAgeMs();
+  if(!last)return {updated:status==='syncing'||status==='queued'?'Updating…':status==='error'?'Retrying sync':''};
+  if(status==='syncing'||status==='queued')return {updated:`Updating · ${formatClockDate(last)}`};
+  if(status==='error'&&state.sync?.last_attempt_at&&Date.now()-Date.parse(state.sync.last_attempt_at)<2*60*1000)return {updated:`Retrying · ${formatClockDate(last)}`};
   if(status==='error')return {updated:`Sync delayed · ${formatClockDate(last)}`};
   if(age>10*60*1000)return {updated:`Sync delayed · ${formatClockDate(last)}`};
   return {updated:`Synced ${formatClockDate(last)}`};
@@ -460,9 +471,10 @@ async function watchAndLoad(forceWatch=false){
   try{
     let w=null;
     try{
-      if(forceWatch||!lastWatchAt||Date.now()-lastWatchAt>30*60*1000){
-        w=await api('/api/watch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({department_id:state.selection.department,group_id:state.selection.group})});
+      const priorityWatch=syncNeedsPriorityWatch()&&Date.now()-lastWatchAt>PRIORITY_WATCH_INTERVAL_MS;
+      if(forceWatch||!lastWatchAt||priorityWatch||Date.now()-lastWatchAt>30*60*1000){
         lastWatchAt=Date.now();
+        w=await api('/api/watch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({department_id:state.selection.department,group_id:state.selection.group})});
       }
       if(w?.sync)state.sync=w.sync;
     }catch(e){if(!state.snapshot)throw e}
@@ -498,7 +510,7 @@ async function watchAndLoad(forceWatch=false){
 }
 async function refreshLoop(){
   if(state.selection){await watchAndLoad(false);await refreshPushStatus();render()}
-  const delay=state.snapshot?(state.usingCached&&navigator.onLine?10000:CLOUD_REFRESH_MS):PENDING_REFRESH_MS;
+  const delay=state.snapshot?((state.usingCached||syncNeedsPriorityWatch())&&navigator.onLine?10000:CLOUD_REFRESH_MS):PENDING_REFRESH_MS;
   setTimeout(refreshLoop,delay);
 }
 async function init(){

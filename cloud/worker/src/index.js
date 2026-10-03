@@ -4,7 +4,7 @@ import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.9.0-cloud";
+const APP_VERSION = "1.9.1-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -131,7 +131,7 @@ async function setMetaValue(env, key, value) {
 }
 
 async function health(env) {
-  const [lastCycle, lastCycleErrors, catalogAt, sourceError, browserAttempt, browserSuccess, browserError, manualRequired] = await Promise.all([
+  const [lastCycle, lastCycleErrors, catalogAt, sourceError, browserAttempt, browserSuccess, browserError, manualRequired, groups] = await Promise.all([
     getMetaValue(env, "last_cycle_finished_at"),
     getMetaValue(env, "last_cycle_errors"),
     getMetaValue(env, "catalog_updated_at"),
@@ -140,7 +140,9 @@ async function health(env) {
     getMetaValue(env, "source_browser_last_success_at"),
     getMetaValue(env, "source_browser_last_error"),
     getMetaValue(env, "source_browser_manual_required_at"),
+    activeGroups(env),
   ]);
+  const delayedGroups=groups.filter((g)=>!g.last_success_at||ageMs(g.last_success_at)>10*60_000);
   return json({
     status: "ok",
     platform: "cloudflare-workers-d1-queues-browser-run",
@@ -157,6 +159,9 @@ async function health(env) {
       source_browser_last_success_at: browserSuccess || null,
       source_browser_last_error: browserError || null,
       source_browser_manual_required_at: manualRequired || null,
+      active_groups: groups.length,
+      delayed_groups: delayedGroups.length,
+      oldest_active_success_at: groups.map((g)=>g.last_success_at).filter(Boolean).sort()[0]||null,
     },
   });
 }
@@ -234,11 +239,21 @@ async function publicWatch(request, env) {
 }
 
 async function timetable(env, groupId) {
-  const row = await env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
+  const [row, group] = await Promise.all([
+    env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(groupId).first(),
+    env.DB.prepare("SELECT department_id FROM groups WHERE id=? LIMIT 1").bind(groupId).first(),
+  ]);
   if (!row) return apiError(404, "not-synced-yet");
   const snapshot = safeParse(row.payload, {});
   delete snapshot.future_weeks;
-  const sync = await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
+  let sync = await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
+  const sourceError = await getMetaValue(env, "source_session_error");
+  if (sourceError) {
+    sync = { ...(sync || {}), group_id: groupId, status: "error", error: "source-session-unavailable" };
+  } else if (group?.department_id) {
+    try { sync = await queueSingleGroupIfNeeded(env, groupId, String(group.department_id), sync); }
+    catch (err) { console.error("timetable freshness queue", groupId, err); }
+  }
   return json({ snapshot, sync: sync || { group_id: groupId, status: "ok" } });
 }
 
