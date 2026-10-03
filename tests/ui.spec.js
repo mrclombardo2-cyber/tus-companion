@@ -9,3 +9,45 @@ test("mobile week has no page overflow and uses phone-first view",async({page})=
 test("course search filters the selected department",async({page})=>{await page.setViewportSize({width:390,height:844});await mockApi(page);await page.goto("/");await page.selectOption("#dep","dep1");await page.fill("#course-search","production");const options=await page.locator("#grp option").allTextContents();expect(options.join(" ")).toContain("Industrial Production Engineering");expect(options.join(" ")).not.toContain("Business Law and Management")});
 test("saved timetable remains usable when API requests fail",async({page})=>{const snap=snapshot();await page.addInitScript(({selection,snap,catalog})=>{localStorage.setItem("tus-companion-course-v1",JSON.stringify(selection));localStorage.setItem("tus-companion-catalog-v1",JSON.stringify(catalog.departments));localStorage.setItem("tus-companion-offline-v1",JSON.stringify({group_id:"g1",saved_at:new Date().toISOString(),snapshot:snap,sync:{status:"ok"},changes:[]}))},{selection,snap,catalog});await page.route("**/api/**",route=>route.abort());await page.goto("/");await expect(page.locator(".offline-banner")).toBeVisible();await expect(page.getByText("IT & Computer Applications 2").first()).toBeVisible()});
 test("settings exposes a subscribable calendar feed",async({page})=>{await selectStoredCourse(page);await mockApi(page);await page.goto("/?tab=settings");await expect(page.getByText("Add to calendar")).toBeVisible();expect(await page.locator("#calendar-copy").getAttribute("data-calendar-url")).toContain("/api/calendar/g1.ics")});
+
+
+test("cached timetable self-recovers after transient timetable failures",async({page})=>{
+  const snap=snapshot();
+  await page.addInitScript(({selection,snap,catalog})=>{
+    localStorage.setItem("tus-companion-course-v1",JSON.stringify(selection));
+    localStorage.setItem("tus-companion-catalog-v1",JSON.stringify(catalog.departments));
+    localStorage.setItem("tus-companion-offline-v1",JSON.stringify({group_id:"g1",saved_at:new Date().toISOString(),snapshot:snap,sync:{status:"ok"},changes:[]}));
+  },{selection,snap,catalog});
+  let timetableCalls=0;
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.9.0-cloud",contact_email:""});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1"){
+      timetableCalls++;
+      if(timetableCalls<3)return json({detail:"temporary-upstream-error"},503);
+      return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    }
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/sync-status/g1")return json({group_id:"g1",status:"ok",last_success_at:new Date().toISOString()});
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/");
+  await expect(page.locator(".offline-banner")).toBeHidden({timeout:8000});
+  await expect(page.locator(".header-status")).toContainText("Synced");
+  expect(timetableCalls).toBeGreaterThanOrEqual(3);
+});
+
+test("mobile keeps pinch zoom available and avoids iOS form-focus zoom",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await mockApi(page);
+  await page.goto("/");
+  const viewport=await page.locator('meta[name="viewport"]').getAttribute("content");
+  expect(viewport||"").not.toContain("user-scalable=no");
+  expect(viewport||"").not.toContain("maximum-scale");
+  const fontSize=await page.locator("#course-search").evaluate(el=>parseFloat(getComputedStyle(el).fontSize));
+  expect(fontSize).toBeGreaterThanOrEqual(16);
+});

@@ -13,6 +13,8 @@ const LEGAL_VERSION='2026-09-30';
 const CLOUD_REFRESH_MS=30*1000;
 const PENDING_REFRESH_MS=15*1000;
 const UI_TIME_REFRESH_MS=15*1000;
+const API_TIMEOUT_MS=9000;
+const RECOVERY_DELAYS_MS=[1500,4000,10000,30000];
 const CHANGES_RESET_AT='2026-09-30T11:58:00.000Z';
 
 const SUBJECT_PALETTE=[
@@ -49,6 +51,8 @@ function saveCatalogCache(){try{localStorage.setItem(CATALOG_CACHE,JSON.stringif
 let deferredInstallPrompt=null;
 let lastWatchAt=0;
 let lastLoadAt=0;
+let cachedRecoveryTimer=null;
+let cachedRecoveryStep=0;
 const initialSelection=readSelection();
 const initialOffline=readOfflineTimetable(initialSelection?.group);
 let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline),offlineSavedAt:initialOffline?.saved_at||null};
@@ -69,14 +73,35 @@ function visibleEvents(){const h=hiddenModules();return (state.snapshot?.events|
 function visibleUpcomingEvents(){const h=hiddenModules();return [...(state.snapshot?.events||[]),...(state.snapshot?.next_week?.events||[])].filter(e=>!h.has(e.module))}
 function esc(v=''){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 
+function sleep(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
 async function api(url,opts){
-  const fetchOpts={cache:'no-store',...(opts||{})};
-  const r=await fetch(url,fetchOpts);
-  const raw=await r.text();
-  let body=null;
-  try{body=raw?JSON.parse(raw):null}catch{}
-  if(!r.ok)throw new ApiError(r.status,body?.detail||body?.error||'',raw);
-  return body;
+  const controller=new AbortController();
+  const timeout=window.setTimeout(()=>controller.abort(),API_TIMEOUT_MS);
+  try{
+    const fetchOpts={cache:'no-store',...(opts||{}),signal:controller.signal};
+    const r=await fetch(url,fetchOpts);
+    const raw=await r.text();
+    let body=null;
+    try{body=raw?JSON.parse(raw):null}catch{}
+    if(!r.ok)throw new ApiError(r.status,body?.detail||body?.error||'',raw);
+    return body;
+  }catch(e){
+    if(e?.name==='AbortError')throw new Error('request-timeout');
+    throw e;
+  }finally{window.clearTimeout(timeout)}
+}
+function retryableApiError(e){return !(e instanceof ApiError)||e.status===408||e.status===429||e.status>=500}
+async function apiRetry(url,opts,attempts=3){
+  let lastError=null;
+  for(let attempt=0;attempt<attempts;attempt++){
+    try{return await api(url,opts)}
+    catch(e){
+      lastError=e;
+      if(!retryableApiError(e)||attempt===attempts-1)throw e;
+      await sleep(500*(2**attempt));
+    }
+  }
+  throw lastError;
 }
 
 function extractRoomCode(rawRoom=''){
@@ -115,7 +140,8 @@ function nextClassContext(e){
   return eventWeekday(e);
 }
 function syncDisplay(){
-  if(state.offline||state.usingCached){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`${state.offline?'Offline':'Cached'}${saved?` · saved ${saved}`:''}`}}
+  if(state.offline){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Offline${saved?` · saved ${saved}`:''}`}}
+  if(state.usingCached){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Reconnecting${saved?` · saved ${saved}`:''}`}}
   const last=state.sync?.last_success_at,status=state.sync?.status;
   if(!last)return {updated:status==='syncing'?'Updating…':status==='error'?'Sync delayed':''};
   const age=Date.now()-new Date(last).getTime();
@@ -156,7 +182,7 @@ function render(){
   const title=state.tab==='today'?'Today':state.tab==='week'?weekPageTitle():state.tab==='changes'?'Changes':'Settings';
   let body=state.tab==='today'?renderToday():state.tab==='week'?renderWeek():state.tab==='changes'?renderChanges():renderSettings();
   const syncUi=syncDisplay();
-  const cacheBanner=(state.offline||state.usingCached)?`<div class="offline-banner" role="status"><b>${state.offline?'Offline mode':'Saved timetable'}</b><span>${state.offlineSavedAt?`Showing data saved ${esc(formatDetected(state.offlineSavedAt))}.`:'Showing the last timetable saved on this device.'} Changes will refresh automatically when the service is reachable.</span></div>`:'';
+  const cacheBanner=(state.offline||state.usingCached)?`<div class="offline-banner" role="status"><div class="offline-copy"><b>${state.offline?'Offline mode':'Reconnecting'}</b><span>${state.offlineSavedAt?`Showing data saved ${esc(formatDetected(state.offlineSavedAt))}.`:'Showing the last timetable saved on this device.'} ${state.offline?'Changes will refresh automatically when the connection returns.':'Automatic retries are running now.'}</span></div>${state.offline?'':'<button id="retry-sync" class="small-ghost" type="button">Retry now</button>'}</div>`:'';
   APP.innerHTML=`<main class="app ${state.tab==='week'?'week-app':''}"><header><div><p class="kicker">TUS ATHLONE</p><h1>${title}</h1></div><div class="header-status">${esc(syncUi.updated)}</div></header>${cacheBanner}${body}${nav()}</main>${renderOverlays()}${state.toast?`<div class="toast" role="status">${esc(state.toast)}</div>`:''}`;
   bindCommon();
 }
@@ -333,6 +359,8 @@ function renderLegalModal(kind){
 }
 
 function bindCommon(){
+  const retrySync=document.getElementById('retry-sync');
+  if(retrySync)retrySync.onclick=async()=>{retrySync.disabled=true;cachedRecoveryStep=0;clearCachedRecovery();await watchAndLoad(true);render()};
   APP.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{const next=b.dataset.tab;if(next==='week'&&state.tab!=='week'){state.weekDate=isoToday();state.weekStart=weekForDate(loadedWeeks(),state.weekDate)?.week_start||null}state.tab=next;history.replaceState(null,'',state.tab==='today'?'/' : `/?tab=${state.tab}`);render()});
   APP.querySelectorAll('[data-week-date]').forEach(b=>b.onclick=()=>updateMobileWeekDay(b.dataset.weekDate,b.dataset.weekStart));
   APP.querySelectorAll('[data-week-select]').forEach(b=>b.onclick=()=>{state.weekStart=b.dataset.weekSelect||null;state.weekDate=null;render();});
@@ -414,17 +442,65 @@ async function enableNotifications(){
 async function testNotification(){try{const reg=await readyServiceWorker(),sub=await reg.pushManager.getSubscription();if(!sub)throw new Error('Enable notifications first.');await api('/api/push/test',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});toast('Test notification queued.')}catch(e){toast(e.message||String(e))}}
 async function disableNotifications(){try{const reg=await readyServiceWorker(),sub=await reg.pushManager.getSubscription();if(sub){await api('/api/push/unsubscribe',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})}).catch(()=>{});await sub.unsubscribe()}await refreshPushStatus();toast('Notifications turned off.')}catch(e){toast(e.message||String(e))}}
 
+function clearCachedRecovery(){if(cachedRecoveryTimer){window.clearTimeout(cachedRecoveryTimer);cachedRecoveryTimer=null}}
+function scheduleCachedRecovery(){
+  if(!state.selection||!state.snapshot||!navigator.onLine||!state.usingCached||cachedRecoveryTimer)return;
+  const delay=RECOVERY_DELAYS_MS[Math.min(cachedRecoveryStep,RECOVERY_DELAYS_MS.length-1)];
+  cachedRecoveryTimer=window.setTimeout(async()=>{
+    cachedRecoveryTimer=null;
+    if(!state.selection||!navigator.onLine||!state.usingCached)return;
+    cachedRecoveryStep=Math.min(cachedRecoveryStep+1,RECOVERY_DELAYS_MS.length-1);
+    await watchAndLoad(true);
+    render();
+    if(state.usingCached)scheduleCachedRecovery();
+  },delay);
+}
 async function watchAndLoad(forceWatch=false){
   if(!state.selection||state.refreshing)return;state.refreshing=true;
   try{
     let w=null;
-    try{if(forceWatch||!lastWatchAt||Date.now()-lastWatchAt>30*60*1000){w=await api('/api/watch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({department_id:state.selection.department,group_id:state.selection.group})});lastWatchAt=Date.now()}if(w?.sync)state.sync=w.sync}catch(e){if(!state.snapshot)throw e}
-    try{const t=await api('/api/timetable/'+encodeURIComponent(state.selection.group));state.snapshot=t.snapshot;state.sync=t.sync||state.sync;try{const allChanges=await api('/api/changes/'+encodeURIComponent(state.selection.group));state.changes=(Array.isArray(allChanges)?allChanges:[]).filter(c=>!c?.detected_at||String(c.detected_at)>CHANGES_RESET_AT)}catch{}state.error='';state.offline=false;state.usingCached=false;saveOfflineTimetable()}
-    catch(e){state.offline=!navigator.onLine;if(e instanceof ApiError&&e.status===404&&e.detail==='not-synced-yet'){if(!state.snapshot){try{state.sync=await api('/api/sync-status/'+encodeURIComponent(state.selection.group))}catch{}state.error=''}else state.usingCached=true}else if(state.snapshot){state.usingCached=true;state.error=''}else state.error='We could not contact the timetable service. It will retry automatically.'}
-  }catch{state.offline=!navigator.onLine;state.usingCached=!!state.snapshot;if(!state.snapshot)state.error='The timetable service is temporarily unavailable. Your course selection is still saved.'}
-  finally{state.refreshing=false;lastLoadAt=Date.now()}
+    try{
+      if(forceWatch||!lastWatchAt||Date.now()-lastWatchAt>30*60*1000){
+        w=await api('/api/watch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({department_id:state.selection.department,group_id:state.selection.group})});
+        lastWatchAt=Date.now();
+      }
+      if(w?.sync)state.sync=w.sync;
+    }catch(e){if(!state.snapshot)throw e}
+    try{
+      const t=await apiRetry('/api/timetable/'+encodeURIComponent(state.selection.group),undefined,3);
+      state.snapshot=t.snapshot;state.sync=t.sync||state.sync;
+      try{
+        const allChanges=await api('/api/changes/'+encodeURIComponent(state.selection.group));
+        state.changes=(Array.isArray(allChanges)?allChanges:[]).filter(c=>!c?.detected_at||String(c.detected_at)>CHANGES_RESET_AT);
+      }catch{}
+      state.error='';state.offline=false;state.usingCached=false;cachedRecoveryStep=0;clearCachedRecovery();saveOfflineTimetable();
+    }catch(e){
+      state.offline=!navigator.onLine;
+      if(e instanceof ApiError&&e.status===404&&e.detail==='not-synced-yet'){
+        if(!state.snapshot){
+          try{state.sync=await api('/api/sync-status/'+encodeURIComponent(state.selection.group))}catch{}
+          state.error='';
+        }else{
+          state.usingCached=true;state.error='';
+        }
+      }else if(state.snapshot){
+        state.usingCached=true;state.error='';
+      }else{
+        state.error='We could not contact the timetable service. It will retry automatically.';
+      }
+      if(state.usingCached&&!state.offline)scheduleCachedRecovery();
+    }
+  }catch{
+    state.offline=!navigator.onLine;state.usingCached=!!state.snapshot;
+    if(!state.snapshot)state.error='The timetable service is temporarily unavailable. Your course selection is still saved.';
+    if(state.usingCached&&!state.offline)scheduleCachedRecovery();
+  }finally{state.refreshing=false;lastLoadAt=Date.now()}
 }
-async function refreshLoop(){if(state.selection){await watchAndLoad(false);await refreshPushStatus();render()}setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS)}
+async function refreshLoop(){
+  if(state.selection){await watchAndLoad(false);await refreshPushStatus();render()}
+  const delay=state.snapshot?(state.usingCached&&navigator.onLine?10000:CLOUD_REFRESH_MS):PENDING_REFRESH_MS;
+  setTimeout(refreshLoop,delay);
+}
 async function init(){
   const di=deviceInfo();document.documentElement.classList.toggle('ios-standalone',di.ios&&di.standalone);if(state.selection&&state.snapshot)render();
   try{const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta').catch(()=>null)]);if(Array.isArray(c?.departments)&&c.departments.length){state.catalog=c.departments;saveCatalogCache()}state.meta=m;if(!state.catalog.length)state.error='Course catalogue is still being prepared. Try again in a few minutes.'}catch{if(!state.catalog.length)state.error='Could not load the course catalogue from the service.'}
@@ -444,12 +520,20 @@ setInterval(()=>{
   if(signature!==lastTemporalUiSignature){lastTemporalUiSignature=signature;render()}
 },UI_TIME_REFRESH_MS);
 
-window.addEventListener('offline',()=>{state.offline=true;state.usingCached=!!state.snapshot;render()});
-window.addEventListener('online',()=>{state.offline=false;if(state.selection)watchAndLoad(true).then(refreshPushStatus).then(render).catch(()=>render())});
+window.addEventListener('offline',()=>{clearCachedRecovery();state.offline=true;state.usingCached=!!state.snapshot;render()});
+window.addEventListener('online',()=>{state.offline=false;cachedRecoveryStep=0;clearCachedRecovery();if(state.selection)watchAndLoad(true).then(refreshPushStatus).then(render).catch(()=>render())});
+window.addEventListener('pageshow',e=>{
+  if(state.selection&&(e.persisted||state.usingCached||state.offline||Date.now()-lastLoadAt>30*1000)){
+    state.offline=!navigator.onLine;
+    if(!state.offline){cachedRecoveryStep=0;clearCachedRecovery()}
+    watchAndLoad(true).then(refreshPushStatus).then(render).catch(()=>render());
+  }
+});
 
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible'&&state.selection&&Date.now()-lastLoadAt>30*1000){
-    watchAndLoad(false).then(refreshPushStatus).then(render).catch(()=>{});
+  if(document.visibilityState==='visible'&&state.selection&&(state.usingCached||state.offline||Date.now()-lastLoadAt>30*1000)){
+    state.offline=!navigator.onLine;
+    watchAndLoad(state.usingCached||state.offline).then(refreshPushStatus).then(render).catch(()=>{});
   }else if(document.visibilityState==='visible'&&state.snapshot){
     const signature=temporalUiSignature();
     if(signature!==lastTemporalUiSignature){lastTemporalUiSignature=signature;render()}

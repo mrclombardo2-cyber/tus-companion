@@ -449,3 +449,21 @@ header>div:first-child{min-width:0}
 .offline-banner{display:flex;gap:10px;align-items:center;justify-content:space-between;margin:-10px 0 20px;padding:11px 13px;border:1px solid #dfd5b5;border-radius:14px;background:#fff8e7;color:#5f522b;font-size:12px;line-height:1.4}
 .offline-banner b{white-space:nowrap}.offline-banner span{text-align:right}.calendar-card .setting-actions{min-width:max-content}
 @media(max-width:520px){.offline-banner{align-items:flex-start;flex-direction:column}.offline-banner span{text-align:left}.calendar-card .setting-actions{min-width:0;width:100%}.calendar-card .setting-actions button{flex:1}}
+
+
+/* v16.1 resilient mobile recovery + zoom ergonomics */
+input,select,textarea{font:inherit}
+button,a,[role="button"],input,select,textarea{touch-action:manipulation}
+.offline-banner{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.offline-banner .offline-copy{min-width:0}
+.offline-banner .offline-copy span{display:block}
+.offline-banner #retry-sync{flex:none;margin:0}
+@media(max-width:760px){
+  input,select,textarea{font-size:16px!important}
+  .offline-banner{align-items:flex-start}
+  .offline-banner #retry-sync{min-height:40px;padding:10px 12px}
+}
+@media(max-width:420px){
+  .offline-banner{flex-direction:column}
+  .offline-banner #retry-sync{width:100%}
+}
