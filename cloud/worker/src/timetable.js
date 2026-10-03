@@ -161,6 +161,17 @@ export function parseTextSpreadsheet(html, fetchedAt = new Date().toISOString())
   };
 }
 
+export function compactWeekSnapshot(snapshot, fallbackFetchedAt = new Date().toISOString()) {
+  if (!snapshot) return null;
+  return {
+    week_number: snapshot.week_number ?? null,
+    week_start: snapshot.week_start ?? null,
+    week_end: snapshot.week_end ?? null,
+    fetched_at: snapshot.fetched_at ?? fallbackFetchedAt,
+    events: Array.isArray(snapshot.events) ? snapshot.events : [],
+  };
+}
+
 function stableKey(e) {
   return JSON.stringify([
     String(e.day || "").toLowerCase(),

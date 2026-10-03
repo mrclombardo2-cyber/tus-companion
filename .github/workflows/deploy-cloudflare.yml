@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v16.2.0
+name: Deploy Cloudflare Worker v16.2.1
 
 on:
   workflow_dispatch:
@@ -104,6 +104,7 @@ jobs:
         run: |
           set -euo pipefail
           node --test tests/calendar.test.mjs
+          node --test tests/timetable.test.mjs
           python3 -m http.server 4173 --directory frontend >/tmp/tus-companion-http.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
@@ -149,7 +150,7 @@ jobs:
           for attempt in $(seq 1 12); do
             health="$(curl --fail --silent --show-error "$base/health")"
             live_version="$(printf '%s\n' "$health" | jq -r '.version // ""')"
-            if [ "$live_version" = "1.9.1-cloud" ]; then
+            if [ "$live_version" = "1.9.2-cloud" ]; then
               version_ok=true
               break
             fi

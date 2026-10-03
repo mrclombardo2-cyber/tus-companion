@@ -1,10 +1,10 @@
 import webpush from "web-push";
 import { launch } from "@cloudflare/playwright";
 import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
-import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges } from "./timetable.js";
+import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.9.1-cloud";
+const APP_VERSION = "1.9.2-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_DAYS = 30;
 const INTEREST_TOUCH_MINUTES = 60;
@@ -880,7 +880,7 @@ async function syncOneGroup(env, scientia, item) {
     const nextWeekStale = !nextWeek?.fetched_at || nextWeekAge >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
     if (!nextWeek || !nextWeekMatches || nextWeekStale) {
       const nextHtml = await scientia.fetchTimetable(departmentId, groupId, "n");
-      nextWeek = compactNextWeekSnapshot(parseTextSpreadsheet(nextHtml));
+      nextWeek = compactWeekSnapshot(parseTextSpreadsheet(nextHtml));
     }
     snapshot.next_week = nextWeek;
 
