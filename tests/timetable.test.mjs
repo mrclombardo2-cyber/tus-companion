@@ -40,3 +40,11 @@ test("scheduler keeps recently viewed groups ahead of stale background interests
   assert.match(source, /const QUEUED_STALE_MINUTES = 2;/);
   assert.match(source, /WHEN i\.last_seen_at >= \? THEN 0 WHEN COALESCE\(p\.has_push,0\)=1 THEN 1 ELSE 2/);
 });
+
+
+test("source-session expiry triggers immediate bounded recovery", () => {
+  const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  assert.match(source, /const SOURCE_BROWSER_RECOVERY_MINUTES = 1;/);
+  assert.match(source, /recovery = await maybeRecoverSourceSession\(env\)/);
+  assert.match(source, /delaySeconds: recovery\.recovered \? 5 : 60/);
+});
