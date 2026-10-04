@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v16.3.1
+name: Deploy Cloudflare Worker v16.3.2
 
 on:
   workflow_dispatch:
