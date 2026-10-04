@@ -4,7 +4,7 @@ import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.10.0-cloud";
+const APP_VERSION = "1.10.1-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_HOURS = 6;
 const INTEREST_TOUCH_MINUTES = 15;
@@ -16,7 +16,7 @@ const MAX_SCHEDULED_QUEUE_MESSAGES = 1;
 const PUSH_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_WINDOW_MINUTES = 3;
-const SOURCE_BROWSER_RECOVERY_MINUTES = 10;
+const SOURCE_BROWSER_RECOVERY_MINUTES = 1;
 const SOURCE_BROWSER_RECOVERY_TIMEOUT_MS = 45_000;
 const NEXT_WEEK_REFRESH_MINUTES = 10;
 const MAP_URL = "https://app.mappedin.com/map/68b1b5dd74254a000bbf174b";
@@ -1138,7 +1138,12 @@ export default {
       } catch (err) {
         console.error("queue job", body.type, err);
         const messageText = String(err?.message || err);
-        if (/source-session-expired|source-session-decryption|source-session-not-configured|source-session-key|source-session-invalid-json/i.test(messageText)) {
+        if (/source-session-expired/i.test(messageText)) {
+          try { await setMetaValue(env, "source_session_error", "source-session-expired"); } catch (metaErr) { console.error("source session meta", metaErr); }
+          let recovery = { recovered: false };
+          try { recovery = await maybeRecoverSourceSession(env); } catch (recoveryErr) { console.error("immediate source recovery", recoveryErr); }
+          message.retry({ delaySeconds: recovery.recovered ? 5 : 60 });
+        } else if (/source-session-decryption|source-session-not-configured|source-session-key|source-session-invalid-json/i.test(messageText)) {
           try { await setMetaValue(env, "source_session_error", messageText); } catch (metaErr) { console.error("source session meta", metaErr); }
           message.retry({ delaySeconds: 300 });
         } else {
