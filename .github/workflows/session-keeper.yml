@@ -8,6 +8,7 @@ on:
     branches: ["main"]
     paths:
       - "cloud/collector/keep_session_alive.py"
+      - "cloud/worker/**"
       - ".github/workflows/session-keeper.yml"
 
 permissions:
