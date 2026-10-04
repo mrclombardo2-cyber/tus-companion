@@ -155,13 +155,9 @@ function syncNeedsPriorityWatch(){
 function syncDisplay(){
   if(state.offline){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Offline${saved?` · saved ${saved}`:''}`}}
   if(state.usingCached){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Reconnecting${saved?` · saved ${saved}`:''}`}}
-  const last=state.sync?.last_success_at,status=state.sync?.status,age=syncAgeMs();
-  if(!last)return {updated:status==='syncing'||status==='queued'||status==='error'?'Updating…':''};
-  // A stale success timestamp is an active recovery state, never a terminal
-  // "Sync delayed" state. The refresh loop/watch endpoint keeps pushing it back
-  // toward fresh data while the last valid timetable remains usable.
-  if(status==='syncing'||status==='queued'||status==='error'||age>5*60*1000)return {updated:'Updating…'};
-  return {updated:`Synced ${formatClockDate(last)}`};
+  const last=state.sync?.last_success_at,status=state.sync?.status;
+  if(last)return {updated:`Updated ${formatClockDate(last)}`};
+  return {updated:status==='syncing'||status==='queued'||status==='error'?'Updating…':''};
 }
 function mapButton(e){return e.room_code?`<button class="route" data-map-room="${esc(e.room_code)}">Open map ↗</button>`:''}
 function card(e){const live=isCurrentEvent(e);return `<article class="class-card subject-card ${live?'current':''}" style="${subjectStyle(e.module)}" data-event-date="${esc(e.date||'')}" data-event-start="${esc(e.start)}"><div class="clock"><b>${esc(formatTime(e.start))}</b><span>${esc(formatTime(e.end))}</span></div><div><div class="row"><h3>${esc(e.module)}</h3>${live?'<span class="live-tag">NOW</span>':''}<span class="tag">${esc(e.type)}</span></div><div class="place">${esc(e.room_code||e.room_raw)}${e.room_name?`<small> · ${esc(e.room_name)}</small>`:''}</div><div class="teacher">${esc(e.staff)}</div></div>${mapButton(e)}</article>`}
