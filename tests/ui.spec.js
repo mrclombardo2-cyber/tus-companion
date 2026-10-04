@@ -61,3 +61,24 @@ test("service worker updates cannot strand an old frontend",async({page})=>{
   expect(source).toContain("window.location.reload()");
   expect(source).toContain("swControllerSeen");
 });
+
+
+test("stale sync self-heals without exposing a terminal delayed state",async({page})=>{
+  const snap=snapshot();
+  const old=new Date(Date.now()-60*60*1000).toISOString();
+  await selectStoredCourse(page);
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.10.0-cloud",contact_email:""});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:old}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:old}});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/");
+  await expect(page.locator(".header-status")).toHaveText("Updating…");
+  await expect(page.locator("body")).not.toContainText("Sync delayed");
+});

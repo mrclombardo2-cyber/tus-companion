@@ -156,11 +156,11 @@ function syncDisplay(){
   if(state.offline){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Offline${saved?` · saved ${saved}`:''}`}}
   if(state.usingCached){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Reconnecting${saved?` · saved ${saved}`:''}`}}
   const last=state.sync?.last_success_at,status=state.sync?.status,age=syncAgeMs();
-  if(!last)return {updated:status==='syncing'||status==='queued'?'Updating…':status==='error'?'Retrying sync':''};
-  if(status==='syncing'||status==='queued')return {updated:`Updating · ${formatClockDate(last)}`};
-  if(status==='error'&&state.sync?.last_attempt_at&&Date.now()-Date.parse(state.sync.last_attempt_at)<2*60*1000)return {updated:`Retrying · ${formatClockDate(last)}`};
-  if(status==='error')return {updated:`Sync delayed · ${formatClockDate(last)}`};
-  if(age>10*60*1000)return {updated:`Sync delayed · ${formatClockDate(last)}`};
+  if(!last)return {updated:status==='syncing'||status==='queued'||status==='error'?'Updating…':''};
+  // A stale success timestamp is an active recovery state, never a terminal
+  // "Sync delayed" state. The refresh loop/watch endpoint keeps pushing it back
+  // toward fresh data while the last valid timetable remains usable.
+  if(status==='syncing'||status==='queued'||status==='error'||age>5*60*1000)return {updated:'Updating…'};
   return {updated:`Synced ${formatClockDate(last)}`};
 }
 function mapButton(e){return e.room_code?`<button class="route" data-map-room="${esc(e.room_code)}">Open map ↗</button>`:''}

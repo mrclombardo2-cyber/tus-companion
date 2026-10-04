@@ -4,13 +4,13 @@ import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.9.3-cloud";
+const APP_VERSION = "1.10.0-cloud";
 const LEGAL_VERSION = "2026-09-30";
-const INTEREST_TTL_DAYS = 30;
-const INTEREST_TOUCH_MINUTES = 60;
+const INTEREST_TTL_HOURS = 6;
+const INTEREST_TOUCH_MINUTES = 15;
 const CATALOG_REFRESH_HOURS = 24;
 const GROUP_SYNC_MIN_SECONDS = 120;
-const QUEUED_STALE_MINUTES = 5;
+const QUEUED_STALE_MINUTES = 2;
 const GROUPS_PER_QUEUE_JOB = 7;
 const MAX_SCHEDULED_QUEUE_MESSAGES = 1;
 const PUSH_SUBSCRIPTIONS_PER_JOB = 40;
@@ -357,22 +357,49 @@ async function sendTestPush(env, endpoint) {
 }
 
 async function activeGroups(env) {
-  const cutoff = new Date(Date.now() - INTEREST_TTL_DAYS * 86400_000).toISOString();
+  // Only recently viewed groups stay in the background refresh pool. Groups with
+  // active push subscriptions remain included regardless of when the UI was last opened.
+  // This prevents months of one-off views from starving the timetable a student is
+  // actively looking at right now.
+  const cutoff = new Date(Date.now() - INTEREST_TTL_HOURS * 3600_000).toISOString();
+  const hotCutoff = new Date(Date.now() - 90 * 60_000).toISOString();
   const res = await env.DB.prepare(
-    `WITH active AS (
-       SELECT group_id, department_id FROM interests WHERE last_seen_at >= ?
-       UNION
-       SELECT DISTINCT p.group_id, g.department_id
-       FROM push_subscriptions p JOIN groups g ON g.id=p.group_id
+    `WITH interest_active AS (
+       SELECT group_id,department_id,last_seen_at
+       FROM interests
+       WHERE last_seen_at >= ?
+     ),
+     push_active AS (
+       SELECT DISTINCT p.group_id,g.department_id
+       FROM push_subscriptions p
+       JOIN groups g ON g.id=p.group_id
        WHERE p.active=1
+     ),
+     active AS (
+       SELECT group_id,department_id FROM interest_active
+       UNION
+       SELECT group_id,department_id FROM push_active
+     ),
+     push_flags AS (
+       SELECT DISTINCT group_id,1 AS has_push
+       FROM push_subscriptions
+       WHERE active=1
      )
-     SELECT a.group_id,a.department_id,g.label,s.payload,s.payload_hash,st.last_attempt_at,st.last_success_at,st.status
+     SELECT a.group_id,a.department_id,g.label,s.payload,s.payload_hash,
+            st.last_attempt_at,st.last_success_at,st.status,
+            i.last_seen_at,COALESCE(p.has_push,0) AS has_push
      FROM active a
+     LEFT JOIN interest_active i ON i.group_id=a.group_id
+     LEFT JOIN push_flags p ON p.group_id=a.group_id
      LEFT JOIN groups g ON g.id=a.group_id
      LEFT JOIN latest_snapshots s ON s.group_id=a.group_id
      LEFT JOIN sync_state st ON st.group_id=a.group_id
-     ORDER BY CASE WHEN st.last_success_at IS NULL THEN 0 ELSE 1 END, st.last_success_at, g.label`,
-  ).bind(cutoff).all();
+     ORDER BY
+       CASE WHEN i.last_seen_at >= ? THEN 0 WHEN COALESCE(p.has_push,0)=1 THEN 1 ELSE 2 END,
+       CASE WHEN st.last_success_at IS NULL THEN 0 ELSE 1 END,
+       st.last_success_at,
+       g.label`,
+  ).bind(cutoff, hotCutoff).all();
   return res.results || [];
 }
 
