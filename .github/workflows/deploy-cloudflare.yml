@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v16.3.2
+name: Deploy Cloudflare Worker v16.4.0
 
 on:
   workflow_dispatch:
@@ -154,7 +154,7 @@ jobs:
           for attempt in $(seq 1 12); do
             health="$(curl --fail --silent --show-error "$base/health")"
             live_version="$(printf '%s\n' "$health" | jq -r '.version // ""')"
-            if [ "$live_version" = "1.10.1-cloud" ]; then
+            if [ "$live_version" = "1.10.2-cloud" ]; then
               version_ok=true
               break
             fi
