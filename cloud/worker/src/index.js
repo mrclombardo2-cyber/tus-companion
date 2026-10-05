@@ -4,7 +4,7 @@ import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.10.2-cloud";
+const APP_VERSION = "1.10.3-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_HOURS = 6;
 const INTEREST_TOUCH_MINUTES = 15;
@@ -894,7 +894,6 @@ async function syncOneGroup(env, scientia, item) {
 
     const html = await scientia.fetchTimetable(departmentId, groupId, "t");
     const snapshot = parseTextSpreadsheet(html);
-    if (!snapshot.events.length) throw new Error("empty-timetable-response");
     snapshot.group_id = groupId;
     snapshot.department_id = departmentId;
 
