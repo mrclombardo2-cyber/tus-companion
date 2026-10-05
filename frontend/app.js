@@ -11,12 +11,12 @@ const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunda
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
 const CLOUD_REFRESH_MS=30*1000;
-const PENDING_REFRESH_MS=15*1000;
+const PENDING_REFRESH_MS=5*1000;
 const UI_TIME_REFRESH_MS=15*1000;
 const API_TIMEOUT_MS=9000;
 const RECOVERY_DELAYS_MS=[1500,4000,10000,30000];
 const PRIORITY_WATCH_AGE_MS=3*60*1000;
-const PRIORITY_WATCH_INTERVAL_MS=60*1000;
+const PRIORITY_WATCH_INTERVAL_MS=15*1000;
 const CHANGES_RESET_AT='2026-09-30T11:58:00.000Z';
 
 const SUBJECT_PALETTE=[
@@ -164,27 +164,25 @@ function card(e){const live=isCurrentEvent(e);return `<article class="class-card
 function nav(){return `<nav>${[['today','Today'],['week','Week'],['changes','Changes'],['settings','Settings']].map(([k,l])=>`<button data-tab="${k}" class="${state.tab===k?'active':''}">${l}</button>`).join('')}</nav>`}
 
 function setup(){
-  APP.innerHTML=`<main class="setup"><div class="brandmark">T</div><p class="kicker">TUS ATHLONE</p><h1>Your timetable,<br/>without the hassle.</h1><p class="lead">Pick your course once. We keep the timetable synced and surface room and time changes.</p><label>Department<select id="dep"><option value="">Choose department</option>${state.catalog.map(d=>`<option value="${esc(d.id)}">${esc(d.label)}</option>`).join('')}</select></label><label>Find course / group<input id="course-search" type="search" placeholder="Type a course name…" autocomplete="off" disabled /></label><label>Course / group<select id="grp" disabled><option value="">Choose course</option></select></label><button id="save" class="cta" disabled>Use this timetable</button>${state.error?`<div class="setup-error">${esc(state.error)}</div>`:''}<p class="privacy">No TUS password is requested by this app.</p><p class="legal-consent">By continuing, you acknowledge the <button data-legal="terms">Terms of Use</button> and <button data-legal="privacy">Privacy Notice</button>.</p></main>${renderOverlays()}`;
-  const dep=document.getElementById('dep'),search=document.getElementById('course-search'),grp=document.getElementById('grp'),save=document.getElementById('save');
-  const refreshGroups=()=>{const d=state.catalog.find(x=>x.id===dep.value),q=String(search.value||'').trim().toLowerCase(),groups=(d?.groups||[]).filter(g=>!q||String(g.label||'').toLowerCase().includes(q));grp.innerHTML='<option value="">Choose course</option>'+groups.map(g=>`<option value="${esc(g.id)}">${esc(g.label)}</option>`).join('');grp.disabled=!dep.value;save.disabled=true};
-  dep.onchange=()=>{search.value='';search.disabled=!dep.value;refreshGroups();if(dep.value)search.focus()};
-  search.oninput=refreshGroups;grp.onchange=()=>save.disabled=!(dep.value&&grp.value);
+  APP.innerHTML=`<main class="setup"><div class="brandmark">T</div><p class="kicker">TUS ATHLONE</p><h1>Your timetable,<br/>without the hassle.</h1><p class="lead">Pick your course once. We keep the timetable synced and surface room and time changes.</p><label>Department<select id="dep"><option value="">Choose department</option>${state.catalog.map(d=>`<option value="${esc(d.id)}">${esc(d.label)}</option>`).join('')}</select></label><label>Course / group<select id="grp" disabled><option value="">Choose course</option></select></label><button id="save" class="cta" disabled>Use this timetable</button>${state.error?`<div class="setup-error">${esc(state.error)}</div>`:''}<p class="privacy">No TUS password is requested by this app.</p><p class="legal-consent">By continuing, you acknowledge the <button data-legal="terms">Terms of Use</button> and <button data-legal="privacy">Privacy Notice</button>.</p></main>${renderOverlays()}`;
+  const dep=document.getElementById('dep'),grp=document.getElementById('grp'),save=document.getElementById('save');
+  const refreshGroups=()=>{const d=state.catalog.find(x=>x.id===dep.value),groups=d?.groups||[];grp.innerHTML='<option value="">Choose course</option>'+groups.map(g=>`<option value="${esc(g.id)}">${esc(g.label)}</option>`).join('');grp.disabled=!dep.value;save.disabled=true};
+  dep.onchange=()=>{refreshGroups()};
+  grp.onchange=()=>save.disabled=!(dep.value&&grp.value);
   save.onclick=async()=>{const d=state.catalog.find(x=>x.id===dep.value),g=d?.groups?.find(x=>x.id===grp.value);state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);state.snapshot=null;state.changes=[];state.weekDate=null;state.weekStart=null;state.error='';state.sync={status:'queued'};state.usingCached=false;state.offlineSavedAt=null;await updateExistingSubscription();render();await watchAndLoad(true);render()};
   bindCommon();
 }
 function syncCopy(){
   const status=state.sync?.status||'never-synced';
-  if(status==='error')return {title:'Timetable temporarily unavailable',body:'We could not refresh the source just now. Your course choice is safe and the service will retry automatically.',kind:'error'};
-  return {title:status==='syncing'?'Reading the latest timetable':'Preparing your timetable',body:'The first time you open your timetable, it may take a little longer to load.',kind:'working'};
+  if(status==='error')return {title:'Retrying timetable sync',body:'This course is being loaded now. You can leave this screen open; retries happen automatically.',kind:'working'};
+  return {title:status==='syncing'?'Reading the latest timetable':'Preparing your timetable',body:'This course is being loaded now. The first load can take a few seconds.',kind:'working'};
 }
-
 function renderPending(){
   const m=syncCopy(),group=state.selection?.groupLabel||state.selection?.group||'';
   const attempt=state.sync?.last_attempt_at?`Last attempt ${formatClockDate(state.sync.last_attempt_at)}`:'Connecting…';
-  APP.innerHTML=`<main class="app pending-page"><header><div><p class="kicker">TUS ATHLONE</p><h1>Syncing your timetable</h1></div></header><section class="sync-panel ${m.kind}"><div class="sync-icon"><span></span></div><div><p class="sync-eyebrow">${esc(group)}</p><h2>${esc(m.title)}</h2><p>${esc(m.body)}</p><div class="sync-meta">${esc(attempt)}</div></div></section>${state.error?`<div class="friendly-error">${esc(state.error)}</div>`:''}<button id="change" class="ghost">Change course</button></main>${renderOverlays()}`;
+  APP.innerHTML=`<main class="app pending-page"><header><div><p class="kicker">TUS ATHLONE</p><h1>Syncing your timetable</h1></div></header><section class="sync-panel ${m.kind}"><div class="sync-icon"><span></span></div><div class="sync-content"><p class="sync-eyebrow">${esc(group)}</p><h2>${esc(m.title)}</h2><p>${esc(m.body)}</p><div class="sync-meta">${esc(attempt)}</div></div></section><button id="change" class="ghost">Change course</button></main>${renderOverlays()}`;
   bindCommon();
 }
-
 function render(){
   if(!state.selection)return setup();
   if(!state.snapshot)return renderPending();
