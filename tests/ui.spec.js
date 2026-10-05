@@ -137,3 +137,33 @@ test("an unsynced selected course becomes usable without a red error state",asyn
   await expect(page.locator(".hero")).toBeVisible({timeout:9000});
   expect(timetableCalls).toBeGreaterThanOrEqual(2);
 });
+
+
+test("Week cards keep long course names fully visible",async({page})=>{
+  await page.setViewportSize({width:1600,height:900});
+  await selectStoredCourse(page);
+  const snap=snapshot();
+  snap.events=[{
+    ...snap.events[0],
+    module:"Computer Aided Engineering Design and Advanced Structural Analysis",
+    start:"09:00",
+    end:"10:00"
+  }];
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.10.3-cloud",contact_email:""});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=week");
+  const card=page.locator(".week-event").first();
+  await expect(card).toBeVisible();
+  await expect(card.locator("strong")).toContainText("Advanced Structural Analysis");
+  const clipped=await card.evaluate(el=>el.scrollHeight>el.clientHeight+1);
+  expect(clipped).toBeFalsy();
+});
