@@ -54,3 +54,9 @@ test("scheduler keeps queue jobs small for responsive first loads", () => {
   const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
   assert.match(source, /const GROUPS_PER_QUEUE_JOB = 1;/);
 });
+
+
+test("valid empty weeks are not rejected by the worker sync path", () => {
+  const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /empty-timetable-response/);
+});
