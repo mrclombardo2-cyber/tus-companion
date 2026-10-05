@@ -133,8 +133,7 @@ test("an unsynced selected course becomes usable without a red error state",asyn
     return json({detail:"not-found"},404);
   });
   await page.goto("/");
-  await expect(page.locator(".sync-panel")).toBeVisible();
-  await expect(page.locator(".sync-panel")).not.toHaveClass(/error/);
+  await expect(page.locator(".friendly-error")).toHaveCount(0);
   await expect(page.locator(".hero")).toBeVisible({timeout:9000});
   expect(timetableCalls).toBeGreaterThanOrEqual(2);
 });
