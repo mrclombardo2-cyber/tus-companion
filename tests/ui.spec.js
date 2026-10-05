@@ -56,7 +56,7 @@ test("mobile keeps pinch zoom available and avoids iOS form-focus zoom",async({p
 test("service worker updates cannot strand an old frontend",async({page})=>{
   await mockApi(page);
   await page.goto("/");
-  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.4.1",{cache:"no-store"}).then(r=>r.text()));
+  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.4.2",{cache:"no-store"}).then(r=>r.text()));
   expect(source).toContain("navigator.serviceWorker.addEventListener('controllerchange'");
   expect(source).toContain("window.location.reload()");
   expect(source).toContain("swControllerSeen");
