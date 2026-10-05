@@ -6,7 +6,7 @@ async function mockApi(page){const snap=snapshot();await page.route("**/api/**",
 async function selectStoredCourse(page){await page.addInitScript(value=>localStorage.setItem("tus-companion-course-v1",JSON.stringify(value)),selection)}
 test("desktop week keeps edge time labels visible and page width stable",async({page})=>{await page.setViewportSize({width:1600,height:900});await selectStoredCourse(page);await mockApi(page);await page.goto("/?tab=week");await expect(page.locator(".week-board")).toBeVisible();const first=page.locator(".week-time-label").first();await expect(first).toHaveText("09:00");const inside=await first.evaluate(el=>{const r=el.getBoundingClientRect(),p=document.querySelector(".week-scroll").getBoundingClientRect();return r.top>=p.top-1&&r.bottom<=p.bottom+1});expect(inside).toBeTruthy();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1)).toBeTruthy()});
 test("mobile week has no page overflow and uses phone-first view",async({page})=>{await page.setViewportSize({width:390,height:844});await selectStoredCourse(page);await mockApi(page);await page.goto("/?tab=week");await expect(page.locator(".mobile-week")).toBeVisible();await expect(page.locator(".week-desktop")).toBeHidden();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1)).toBeTruthy()});
-test("course search filters the selected department",async({page})=>{await page.setViewportSize({width:390,height:844});await mockApi(page);await page.goto("/");await page.selectOption("#dep","dep1");await page.fill("#course-search","production");const options=await page.locator("#grp option").allTextContents();expect(options.join(" ")).toContain("Industrial Production Engineering");expect(options.join(" ")).not.toContain("Business Law and Management")});
+test("course setup uses only department and course dropdowns",async({page})=>{await page.setViewportSize({width:390,height:844});await mockApi(page);await page.goto("/");await expect(page.locator("#course-search")).toHaveCount(0);await page.selectOption("#dep","dep1");const options=await page.locator("#grp option").allTextContents();expect(options.join(" ")).toContain("Industrial Production Engineering");expect(options.join(" ")).toContain("Business Law and Management")});
 test("saved timetable remains usable when API requests fail",async({page})=>{const snap=snapshot();await page.addInitScript(({selection,snap,catalog})=>{localStorage.setItem("tus-companion-course-v1",JSON.stringify(selection));localStorage.setItem("tus-companion-catalog-v1",JSON.stringify(catalog.departments));localStorage.setItem("tus-companion-offline-v1",JSON.stringify({group_id:"g1",saved_at:new Date().toISOString(),snapshot:snap,sync:{status:"ok"},changes:[]}))},{selection,snap,catalog});await page.route("**/api/**",route=>route.abort());await page.goto("/");await expect(page.locator(".offline-banner")).toBeVisible();await expect(page.getByText("IT & Computer Applications 2").first()).toBeVisible()});
 test("settings exposes a subscribable calendar feed",async({page})=>{await selectStoredCourse(page);await mockApi(page);await page.goto("/?tab=settings");await expect(page.getByText("Add to calendar")).toBeVisible();expect(await page.locator("#calendar-copy").getAttribute("data-calendar-url")).toContain("/api/calendar/g1.ics")});
 
@@ -48,7 +48,7 @@ test("mobile keeps pinch zoom available and avoids iOS form-focus zoom",async({p
   const viewport=await page.locator('meta[name="viewport"]').getAttribute("content");
   expect(viewport||"").not.toContain("user-scalable=no");
   expect(viewport||"").not.toContain("maximum-scale");
-  const fontSize=await page.locator("#course-search").evaluate(el=>parseFloat(getComputedStyle(el).fontSize));
+  const fontSize=await page.locator("#dep").evaluate(el=>parseFloat(getComputedStyle(el).fontSize));
   expect(fontSize).toBeGreaterThanOrEqual(16);
 });
 
@@ -81,4 +81,60 @@ test("background sync stays silent when a valid timetable already exists",async(
   await page.goto("/");
   await expect(page.locator(".header-status")).toContainText("Updated");
   await expect(page.locator("body")).not.toContainText("Sync delayed");
+});
+
+
+test("long pending course labels stay inside the sync card",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.addInitScript(()=>{
+    localStorage.setItem("tus-companion-course-v1",JSON.stringify({
+      department:"dep1",
+      group:"g-long",
+      departmentLabel:"Engineering",
+      groupLabel:"AL_CCIVL_7_2 BACHELOR OF ENGINEERING IN CIVIL ENGINEERING"
+    }));
+  });
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.10.2-cloud",contact_email:""});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:false,sync:{group_id:"g-long",status:"queued",last_attempt_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g-long")return json({detail:"not-synced-yet"},404);
+    if(path==="/api/sync-status/g-long")return json({group_id:"g-long",status:"queued",last_attempt_at:new Date().toISOString()});
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/");
+  const panel=page.locator(".sync-panel");
+  await expect(panel).toBeVisible();
+  const fits=await panel.evaluate(el=>el.scrollWidth<=el.clientWidth+1);
+  expect(fits).toBeTruthy();
+});
+
+test("an unsynced selected course becomes usable without a red error state",async({page})=>{
+  const snap=snapshot();
+  await selectStoredCourse(page);
+  let timetableCalls=0;
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.10.2-cloud",contact_email:""});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:timetableCalls>0,sync:{group_id:"g1",status:timetableCalls>0?"ok":"queued",last_attempt_at:new Date().toISOString(),last_success_at:timetableCalls>0?new Date().toISOString():null}});
+    if(path==="/api/timetable/g1"){
+      timetableCalls++;
+      if(timetableCalls===1)return json({detail:"not-synced-yet"},404);
+      return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    }
+    if(path==="/api/sync-status/g1")return json({group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString()});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/");
+  await expect(page.locator(".sync-panel")).toBeVisible();
+  await expect(page.locator(".sync-panel")).not.toHaveClass(/error/);
+  await expect(page.locator(".hero")).toBeVisible({timeout:9000});
+  expect(timetableCalls).toBeGreaterThanOrEqual(2);
 });
