@@ -4,14 +4,14 @@ import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.10.1-cloud";
+const APP_VERSION = "1.10.2-cloud";
 const LEGAL_VERSION = "2026-09-30";
 const INTEREST_TTL_HOURS = 6;
 const INTEREST_TOUCH_MINUTES = 15;
 const CATALOG_REFRESH_HOURS = 24;
 const GROUP_SYNC_MIN_SECONDS = 120;
 const QUEUED_STALE_MINUTES = 2;
-const GROUPS_PER_QUEUE_JOB = 7;
+const GROUPS_PER_QUEUE_JOB = 1;
 const MAX_SCHEDULED_QUEUE_MESSAGES = 1;
 const PUSH_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_SUBSCRIPTIONS_PER_JOB = 40;
