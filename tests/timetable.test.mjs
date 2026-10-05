@@ -48,3 +48,9 @@ test("source-session expiry triggers immediate bounded recovery", () => {
   assert.match(source, /recovery = await maybeRecoverSourceSession\(env\)/);
   assert.match(source, /delaySeconds: recovery\.recovered \? 5 : 60/);
 });
+
+
+test("scheduler keeps queue jobs small for responsive first loads", () => {
+  const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  assert.match(source, /const GROUPS_PER_QUEUE_JOB = 1;/);
+});
