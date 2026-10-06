@@ -244,7 +244,7 @@ jobs:
           catalog_json="$(curl --fail --silent --show-error "$base/api/catalog")"
           priority_group=""
           priority_department=""
-          while IFS=
+          while IFS="$(printf '\t')" read -r dep gid; do
             [ -n "$gid" ] || continue
             [ "$gid" != "$smoke_group" ] || continue
             gid_encoded="$(jq -rn --arg v "$gid" '$v|@uri')"
