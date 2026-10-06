@@ -10,7 +10,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.5.0';
+const CLIENT_VERSION='16.5.1';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -66,7 +66,7 @@ let clientVersionReloading=false;
 let lastClientVersionCheck=0;
 const initialSelection=readSelection();
 const initialOffline=readOfflineTimetable(initialSelection?.group);
-let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline),offlineSavedAt:initialOffline?.saved_at||null};
+let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,waitingForFresh:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline),offlineSavedAt:initialOffline?.saved_at||null};
 
 class ApiError extends Error{
   constructor(status,detail,raw=''){super(detail||raw||`Request failed (${status})`);this.status=status;this.detail=detail;this.raw=raw}
@@ -181,7 +181,7 @@ function setup(){
   const refreshGroups=()=>{const d=state.catalog.find(x=>x.id===dep.value),groups=d?.groups||[];grp.innerHTML='<option value="">Choose course</option>'+groups.map(g=>`<option value="${esc(g.id)}">${esc(g.label)}</option>`).join('');grp.disabled=!dep.value;save.disabled=true};
   dep.onchange=()=>{refreshGroups()};
   grp.onchange=()=>save.disabled=!(dep.value&&grp.value);
-  save.onclick=async()=>{const d=state.catalog.find(x=>x.id===dep.value),g=d?.groups?.find(x=>x.id===grp.value);state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);state.snapshot=null;state.changes=[];state.weekDate=null;state.weekStart=null;state.error='';state.sync={status:'queued'};state.usingCached=false;state.offlineSavedAt=null;await updateExistingSubscription();render();await watchAndLoad(true,true);render()};
+  save.onclick=async()=>{const d=state.catalog.find(x=>x.id===dep.value),g=d?.groups?.find(x=>x.id===grp.value);state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);state.snapshot=null;state.changes=[];state.weekDate=null;state.weekStart=null;state.error='';state.sync={status:'queued'};state.usingCached=false;state.offlineSavedAt=null;state.waitingForFresh=true;await updateExistingSubscription();render();await watchAndLoad(true,true);state.waitingForFresh=false;render()};
   bindCommon();
 }
 function syncCopy(){
@@ -197,7 +197,7 @@ function renderPending(){
 }
 function render(){
   if(!state.selection)return setup();
-  if(!state.snapshot)return renderPending();
+  if(state.waitingForFresh||!state.snapshot)return renderPending();
   const title=state.tab==='today'?'Today':state.tab==='week'?weekPageTitle():state.tab==='changes'?'Changes':'Settings';
   let body=state.tab==='today'?renderToday():state.tab==='week'?renderWeek():state.tab==='changes'?renderChanges():renderSettings();
   const syncUi=syncDisplay();
@@ -588,6 +588,8 @@ async function refreshLoop(){
 }
 async function init(){
   cleanVersionParam();
+  const bootNeedsFresh=Boolean(state.selection&&navigator.onLine&&(!state.snapshot||!timetablePayloadFresh({snapshot:state.snapshot,sync:state.sync})));
+  state.waitingForFresh=bootNeedsFresh;
   const di=deviceInfo();document.documentElement.classList.toggle('ios-standalone',di.ios&&di.standalone);if(state.selection)render();
   try{
     const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta?_boot='+Date.now()).catch(()=>null)]);
@@ -607,7 +609,8 @@ async function init(){
     if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
   }catch{}}
   await refreshPushStatus();
-  if(state.selection)await watchAndLoad(true,!state.snapshot);
+  if(state.selection)await watchAndLoad(true,bootNeedsFresh);
+  state.waitingForFresh=false;
   if(state.selection&&state.snapshot){setTimeout(()=>{if(shouldAutoOfferInstall()){state.installModal=true;render()}else if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},900)}
   render();
   setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS);

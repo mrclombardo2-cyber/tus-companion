@@ -1,6 +1,6 @@
-const CLIENT_VERSION='16.5.0';
-const CACHE='tus-companion-v16.5.0';
-const ASSETS=['/','/styles.css?v=16.5.0','/app.js?v=16.5.0','/manifest.webmanifest','/icon-192.png','/icon-512.png'];
+const CLIENT_VERSION='16.5.1';
+const CACHE='tus-companion-v16.5.1';
+const ASSETS=['/','/styles.css?v=16.5.1','/app.js?v=16.5.1','/manifest.webmanifest','/icon-192.png','/icon-512.png'];
 
 self.addEventListener('install',e=>e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)).then(()=>self.skipWaiting())));
 

@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v16.5.0
+name: Deploy Cloudflare Worker v16.5.1
 
 on:
   workflow_dispatch:
@@ -154,7 +154,7 @@ jobs:
           for attempt in $(seq 1 12); do
             health="$(curl --fail --silent --show-error "$base/health")"
             live_version="$(printf '%s\n' "$health" | jq -r '.version // ""')"
-            if [ "$live_version" = "1.11.0-cloud" ]; then
+            if [ "$live_version" = "1.11.1-cloud" ]; then
               version_ok=true
               break
             fi
@@ -170,7 +170,7 @@ jobs:
 
           echo "Checking public app metadata and catalog..."
           meta="$(curl --fail --silent --show-error "$base/api/meta")"
-          printf '%s\n' "$meta" | jq -e '.version == "1.11.0-cloud" and .frontend_version == "16.5.0"' >/dev/null
+          printf '%s\n' "$meta" | jq -e '.version == "1.11.1-cloud" and .frontend_version == "16.5.1"' >/dev/null
           curl --fail --silent --show-error "$base/api/catalog" | jq -e '.departments | length > 0' >/dev/null
 
 
