@@ -56,7 +56,7 @@ test("mobile keeps pinch zoom available and avoids iOS form-focus zoom",async({p
 test("service worker updates cannot strand an old frontend",async({page})=>{
   await mockApi(page);
   await page.goto("/");
-  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.5.1",{cache:"no-store"}).then(r=>r.text()));
+  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.5.2",{cache:"no-store"}).then(r=>r.text()));
   expect(source).toContain("navigator.serviceWorker.addEventListener('controllerchange'");
   expect(source).toContain("window.location.reload()");
   expect(source).toContain("swControllerSeen");
@@ -172,14 +172,14 @@ test("Week cards keep long course names fully visible",async({page})=>{
 test("installed PWA actively upgrades to the newest client shell",async({page})=>{
   await mockApi(page);
   await page.goto("/");
-  const appSource=await page.evaluate(async()=>await fetch("/app.js?v=16.5.1",{cache:"no-store"}).then(r=>r.text()));
+  const appSource=await page.evaluate(async()=>await fetch("/app.js?v=16.5.2",{cache:"no-store"}).then(r=>r.text()));
   const swSource=await page.evaluate(async()=>await fetch("/sw.js",{cache:"no-store"}).then(r=>r.text()));
-  expect(appSource).toContain("const CLIENT_VERSION='16.5.1'");
+  expect(appSource).toContain("const CLIENT_VERSION='16.5.2'");
   expect(appSource).toContain("ensureLatestClient");
   expect(appSource).toContain("visibilitychange");
   expect(swSource).toContain("client.navigate");
   expect(swSource).toContain("includeUncontrolled:true");
-  expect(swSource).toContain("tus-companion-v16.5.1");
+  expect(swSource).toContain("tus-companion-v16.5.2");
 });
 
 test("first open of a stale course waits for fresh data before showing the timetable",async({page})=>{
@@ -195,7 +195,7 @@ test("first open of a stale course waits for fresh data before showing the timet
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.11.1-cloud",frontend_version:"16.5.1",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.11.2-cloud",frontend_version:"16.5.2",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:new Date(Date.now()-6*60*60*1000).toISOString()}});
     if(path==="/api/timetable/g1"){
       timetableCalls++;
@@ -218,7 +218,7 @@ test("first open of a stale course waits for fresh data before showing the timet
 });
 
 
-test("stale installed course stays behind the fresh-data gate until current data arrives",async({page})=>{
+test("returning user sees cached timetable immediately and refreshes in background",async({page})=>{
   await page.setViewportSize({width:390,height:844});
   const stale=snapshot();
   stale.events=stale.events.map(e=>({...e,module:"OLD INSTALLED SNAPSHOT"}));
@@ -237,7 +237,7 @@ test("stale installed course stays behind the fresh-data gate until current data
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.11.1-cloud",frontend_version:"16.5.1",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.11.2-cloud",frontend_version:"16.5.2",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:staleSync.last_success_at}});
     if(path==="/api/timetable/g1"){
       calls++;
@@ -250,9 +250,8 @@ test("stale installed course stays behind the fresh-data gate until current data
     return json({detail:"not-found"},404);
   });
   await page.goto("/");
-  await expect(page.locator(".sync-panel")).toBeVisible();
-  await expect(page.locator("body")).not.toContainText("OLD INSTALLED SNAPSHOT");
-  await expect(page.locator(".hero")).toBeVisible({timeout:12000});
-  await expect(page.locator("body")).toContainText("Current installed timetable");
+  await expect(page.locator(".sync-panel")).toHaveCount(0);
+  await expect(page.locator("body")).toContainText("OLD INSTALLED SNAPSHOT");
+  await expect(page.locator("body")).toContainText("Current installed timetable",{timeout:12000});
   expect(calls).toBeGreaterThanOrEqual(3);
 });
