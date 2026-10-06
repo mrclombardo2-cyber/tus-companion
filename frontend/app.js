@@ -10,7 +10,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.5.1';
+const CLIENT_VERSION='16.5.2';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -66,7 +66,7 @@ let clientVersionReloading=false;
 let lastClientVersionCheck=0;
 const initialSelection=readSelection();
 const initialOffline=readOfflineTimetable(initialSelection?.group);
-let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,waitingForFresh:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline),offlineSavedAt:initialOffline?.saved_at||null};
+let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,waitingForFresh:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline)&&!navigator.onLine,offlineSavedAt:initialOffline?.saved_at||null};
 
 class ApiError extends Error{
   constructor(status,detail,raw=''){super(detail||raw||`Request failed (${status})`);this.status=status;this.detail=detail;this.raw=raw}
@@ -588,8 +588,8 @@ async function refreshLoop(){
 }
 async function init(){
   cleanVersionParam();
-  const bootNeedsFresh=Boolean(state.selection&&navigator.onLine&&(!state.snapshot||!timetablePayloadFresh({snapshot:state.snapshot,sync:state.sync})));
-  state.waitingForFresh=bootNeedsFresh;
+  const firstCourseLoad=Boolean(state.selection&&!state.snapshot);
+  state.waitingForFresh=firstCourseLoad;
   const di=deviceInfo();document.documentElement.classList.toggle('ios-standalone',di.ios&&di.standalone);if(state.selection)render();
   try{
     const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta?_boot='+Date.now()).catch(()=>null)]);
@@ -609,7 +609,7 @@ async function init(){
     if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
   }catch{}}
   await refreshPushStatus();
-  if(state.selection)await watchAndLoad(true,bootNeedsFresh);
+  if(state.selection)await watchAndLoad(true,firstCourseLoad);
   state.waitingForFresh=false;
   if(state.selection&&state.snapshot){setTimeout(()=>{if(shouldAutoOfferInstall()){state.installModal=true;render()}else if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},900)}
   render();
@@ -632,22 +632,22 @@ window.addEventListener('offline',()=>{clearCachedRecovery();state.offline=true;
 window.addEventListener('online',()=>{state.offline=false;cachedRecoveryStep=0;clearCachedRecovery();if(state.selection)watchAndLoad(true).then(refreshPushStatus).then(render).catch(()=>render())});
 window.addEventListener('pageshow',async e=>{
   if(await ensureLatestClient(true))return;
-  if(state.selection&&(e.persisted||state.usingCached||state.offline||Date.now()-lastLoadAt>30*1000)){
+  if(state.selection&&state.snapshot){
     state.offline=!navigator.onLine;
-    if(!state.offline){cachedRecoveryStep=0;clearCachedRecovery()}
-    watchAndLoad(true).then(refreshPushStatus).then(render).catch(()=>render());
+    if(!state.offline){cachedRecoveryStep=0;clearCachedRecovery();watchAndLoad(true,false).then(refreshPushStatus).then(render).catch(()=>render())}
+    else render();
   }
 });
 
 document.addEventListener('visibilitychange',async()=>{
   if(document.visibilityState!=='visible')return;
   if(await ensureLatestClient(true))return;
-  if(state.selection&&(state.usingCached||state.offline||Date.now()-lastLoadAt>30*1000)){
+  if(state.selection&&state.snapshot){
     state.offline=!navigator.onLine;
-    watchAndLoad(state.usingCached||state.offline).then(refreshPushStatus).then(render).catch(()=>{});
-  }else if(state.snapshot){
     const signature=temporalUiSignature();
     if(signature!==lastTemporalUiSignature){lastTemporalUiSignature=signature;render()}
+    if(!state.offline)watchAndLoad(true,false).then(refreshPushStatus).then(render).catch(()=>{});
+    else render();
   }
 });
 setInterval(()=>{if(document.visibilityState==='visible')ensureLatestClient(false)},CLIENT_UPDATE_CHECK_MS);
