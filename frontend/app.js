@@ -10,6 +10,11 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
+const CLIENT_VERSION='16.5.0';
+const CLIENT_UPDATE_CHECK_MS=60*1000;
+const FIRST_LOAD_FRESH_MS=2*60*1000;
+const FIRST_LOAD_WAIT_MS=50*1000;
+const FIRST_LOAD_POLL_MS=1500;
 const CLOUD_REFRESH_MS=30*1000;
 const PENDING_REFRESH_MS=5*1000;
 const UI_TIME_REFRESH_MS=15*1000;
@@ -57,6 +62,8 @@ let cachedRecoveryTimer=null;
 let cachedRecoveryStep=0;
 let swControllerSeen=Boolean('serviceWorker'in navigator&&navigator.serviceWorker.controller);
 let swControllerReloading=false;
+let clientVersionReloading=false;
+let lastClientVersionCheck=0;
 const initialSelection=readSelection();
 const initialOffline=readOfflineTimetable(initialSelection?.group);
 let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline),offlineSavedAt:initialOffline?.saved_at||null};
@@ -147,6 +154,11 @@ function syncAgeMs(){
   const last=state.sync?.last_success_at,ms=Date.parse(last||'');
   return Number.isFinite(ms)?Date.now()-ms:Infinity;
 }
+function timetablePayloadFresh(payload,maxAgeMs=FIRST_LOAD_FRESH_MS){
+  const stamp=payload?.sync?.last_success_at||payload?.snapshot?.fetched_at||'';
+  const ms=Date.parse(stamp);
+  return Number.isFinite(ms)&&Date.now()-ms<=maxAgeMs;
+}
 function syncNeedsPriorityWatch(){
   const status=state.sync?.status||'never-synced';
   if(['error','never-synced'].includes(status))return true;
@@ -169,7 +181,7 @@ function setup(){
   const refreshGroups=()=>{const d=state.catalog.find(x=>x.id===dep.value),groups=d?.groups||[];grp.innerHTML='<option value="">Choose course</option>'+groups.map(g=>`<option value="${esc(g.id)}">${esc(g.label)}</option>`).join('');grp.disabled=!dep.value;save.disabled=true};
   dep.onchange=()=>{refreshGroups()};
   grp.onchange=()=>save.disabled=!(dep.value&&grp.value);
-  save.onclick=async()=>{const d=state.catalog.find(x=>x.id===dep.value),g=d?.groups?.find(x=>x.id===grp.value);state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);state.snapshot=null;state.changes=[];state.weekDate=null;state.weekStart=null;state.error='';state.sync={status:'queued'};state.usingCached=false;state.offlineSavedAt=null;await updateExistingSubscription();render();await watchAndLoad(true);render()};
+  save.onclick=async()=>{const d=state.catalog.find(x=>x.id===dep.value),g=d?.groups?.find(x=>x.id===grp.value);state.selection={department:dep.value,group:grp.value,departmentLabel:d?.label||dep.value,groupLabel:g?.label||grp.value};localStorage.setItem(STORE,JSON.stringify(state.selection));localStorage.setItem(LEGAL_ACK,LEGAL_VERSION);state.snapshot=null;state.changes=[];state.weekDate=null;state.weekStart=null;state.error='';state.sync={status:'queued'};state.usingCached=false;state.offlineSavedAt=null;await updateExistingSubscription();render();await watchAndLoad(true,true);render()};
   bindCommon();
 }
 function syncCopy(){
@@ -405,6 +417,42 @@ async function readyServiceWorker(timeoutMs=2500){
     new Promise((_,reject)=>setTimeout(()=>reject(new Error('service-worker-timeout')),timeoutMs))
   ]);
 }
+function cleanVersionParam(){
+  try{
+    const u=new URL(location.href);
+    if(!u.searchParams.has('_appv'))return;
+    u.searchParams.delete('_appv');
+    history.replaceState(null,'',u.pathname+(u.searchParams.size?'?'+u.searchParams.toString():'')+u.hash);
+  }catch{}
+}
+async function reloadForClientVersion(latest){
+  if(clientVersionReloading)return true;
+  clientVersionReloading=true;
+  try{
+    if('serviceWorker'in navigator){
+      const reg=await navigator.serviceWorker.getRegistration();
+      if(reg){
+        await reg.update().catch(()=>{});
+        if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
+      }
+    }
+  }catch{}
+  const u=new URL(location.href);
+  u.searchParams.set('_appv',String(latest||Date.now()));
+  location.replace(u.toString());
+  return true;
+}
+async function ensureLatestClient(force=false,knownMeta=null){
+  if(clientVersionReloading||!navigator.onLine)return false;
+  if(!force&&Date.now()-lastClientVersionCheck<CLIENT_UPDATE_CHECK_MS)return false;
+  lastClientVersionCheck=Date.now();
+  try{
+    const meta=knownMeta||await api('/api/meta?_client_check='+Date.now());
+    const latest=String(meta?.frontend_version||'').trim();
+    if(latest&&latest!==CLIENT_VERSION)return reloadForClientVersion(latest);
+  }catch{}
+  return false;
+}
 async function refreshPushStatus(){
   state.push={supported:('serviceWorker'in navigator)&&('PushManager'in window)&&('Notification'in window),permission:('Notification'in window?Notification.permission:'default'),subscribed:false};
   if(!state.push.supported)return;
@@ -462,45 +510,74 @@ function scheduleCachedRecovery(){
     if(state.usingCached)scheduleCachedRecovery();
   },delay);
 }
-async function watchAndLoad(forceWatch=false){
+async function watchAndLoad(forceWatch=false,requireFresh=false){
   if(!state.selection||state.refreshing)return;state.refreshing=true;
+  const deadline=requireFresh?Date.now()+FIRST_LOAD_WAIT_MS:0;
+  let fallbackPayload=null;
   try{
-    let w=null;
-    try{
-      const priorityWatch=syncNeedsPriorityWatch()&&Date.now()-lastWatchAt>PRIORITY_WATCH_INTERVAL_MS;
-      if(forceWatch||!lastWatchAt||priorityWatch||Date.now()-lastWatchAt>30*60*1000){
-        lastWatchAt=Date.now();
-        w=await api('/api/watch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({department_id:state.selection.department,group_id:state.selection.group})});
-      }
-      if(w?.sync)state.sync=w.sync;
-    }catch(e){if(!state.snapshot)throw e}
-    try{
-      const t=await apiRetry('/api/timetable/'+encodeURIComponent(state.selection.group),undefined,3);
-      state.snapshot=t.snapshot;state.sync=t.sync||state.sync;
+    let first=true;
+    while(true){
+      let w=null;
       try{
-        const allChanges=await api('/api/changes/'+encodeURIComponent(state.selection.group));
-        state.changes=(Array.isArray(allChanges)?allChanges:[]).filter(c=>!c?.detected_at||String(c.detected_at)>CHANGES_RESET_AT);
-      }catch{}
-      state.error='';state.offline=false;state.usingCached=false;cachedRecoveryStep=0;clearCachedRecovery();saveOfflineTimetable();
-    }catch(e){
-      state.offline=!navigator.onLine;
-      if(e instanceof ApiError&&e.status===404&&e.detail==='not-synced-yet'){
-        if(!state.snapshot){
+        const priorityWatch=syncNeedsPriorityWatch()&&Date.now()-lastWatchAt>PRIORITY_WATCH_INTERVAL_MS;
+        if(forceWatch||first||!lastWatchAt||priorityWatch||Date.now()-lastWatchAt>30*60*1000){
+          lastWatchAt=Date.now();
+          w=await api('/api/watch',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({department_id:state.selection.department,group_id:state.selection.group})});
+        }
+        if(w?.sync)state.sync=w.sync;
+      }catch(err){
+        if(!state.snapshot&&!requireFresh)throw err;
+      }
+
+      try{
+        const t=await apiRetry('/api/timetable/'+encodeURIComponent(state.selection.group),undefined,requireFresh?1:3);
+        fallbackPayload=t;
+        state.sync=t.sync||state.sync;
+        if(!requireFresh||timetablePayloadFresh(t)){
+          state.snapshot=t.snapshot;
+          try{
+            const allChanges=await api('/api/changes/'+encodeURIComponent(state.selection.group));
+            state.changes=(Array.isArray(allChanges)?allChanges:[]).filter(c=>!c?.detected_at||String(c.detected_at)>CHANGES_RESET_AT);
+          }catch{}
+          state.error='';state.offline=false;state.usingCached=false;cachedRecoveryStep=0;clearCachedRecovery();saveOfflineTimetable();
+          break;
+        }
+      }catch(err){
+        state.offline=!navigator.onLine;
+        if(err instanceof ApiError&&err.status===404&&err.detail==='not-synced-yet'){
           try{state.sync=await api('/api/sync-status/'+encodeURIComponent(state.selection.group))}catch{}
           state.error='';
-        }else{
+        }else if(!requireFresh&&state.snapshot){
           state.usingCached=true;state.error='';
+          if(!state.offline)scheduleCachedRecovery();
+          break;
+        }else if(!requireFresh){
+          state.error='We could not contact the timetable service. It will retry automatically.';
+          break;
         }
-      }else if(state.snapshot){
-        state.usingCached=true;state.error='';
-      }else{
-        state.error='We could not contact the timetable service. It will retry automatically.';
       }
-      if(state.usingCached&&!state.offline)scheduleCachedRecovery();
+
+      if(!requireFresh||!navigator.onLine||Date.now()>=deadline)break;
+      first=false;
+      forceWatch=Date.now()-lastWatchAt>=5000;
+      render();
+      await sleep(FIRST_LOAD_POLL_MS);
+    }
+
+    if(requireFresh&&!state.snapshot){
+      if(fallbackPayload?.snapshot){
+        state.snapshot=fallbackPayload.snapshot;
+        state.sync=fallbackPayload.sync||state.sync;
+        state.error='';state.offline=false;state.usingCached=true;
+        saveOfflineTimetable();
+        scheduleCachedRecovery();
+      }else{
+        state.error='';
+      }
     }
   }catch{
     state.offline=!navigator.onLine;state.usingCached=!!state.snapshot;
-    if(!state.snapshot)state.error='The timetable service is temporarily unavailable. Your course selection is still saved.';
+    if(!state.snapshot)state.error='';
     if(state.usingCached&&!state.offline)scheduleCachedRecovery();
   }finally{state.refreshing=false;lastLoadAt=Date.now()}
 }
@@ -510,8 +587,15 @@ async function refreshLoop(){
   setTimeout(refreshLoop,delay);
 }
 async function init(){
-  const di=deviceInfo();document.documentElement.classList.toggle('ios-standalone',di.ios&&di.standalone);if(state.selection&&state.snapshot)render();
-  try{const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta').catch(()=>null)]);if(Array.isArray(c?.departments)&&c.departments.length){state.catalog=c.departments;saveCatalogCache()}state.meta=m;if(!state.catalog.length)state.error='Course catalogue is still being prepared. Try again in a few minutes.'}catch{if(!state.catalog.length)state.error='Could not load the course catalogue from the service.'}
+  cleanVersionParam();
+  const di=deviceInfo();document.documentElement.classList.toggle('ios-standalone',di.ios&&di.standalone);if(state.selection)render();
+  try{
+    const [c,m]=await Promise.all([api('/api/catalog'),api('/api/meta?_boot='+Date.now()).catch(()=>null)]);
+    if(Array.isArray(c?.departments)&&c.departments.length){state.catalog=c.departments;saveCatalogCache()}
+    state.meta=m;
+    if(await ensureLatestClient(true,m))return;
+    if(!state.catalog.length)state.error='Course catalogue is still being prepared. Try again in a few minutes.';
+  }catch{if(!state.catalog.length)state.error='Could not load the course catalogue from the service.'}
   if('serviceWorker'in navigator){try{
     navigator.serviceWorker.addEventListener('controllerchange',()=>{
       if(swControllerReloading)return;
@@ -522,7 +606,11 @@ async function init(){
     await reg.update().catch(()=>{});
     if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
   }catch{}}
-  await refreshPushStatus();if(state.selection)await watchAndLoad(true);if(state.selection&&state.snapshot){setTimeout(()=>{if(shouldAutoOfferInstall()){state.installModal=true;render()}else if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},900)}render();setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS);
+  await refreshPushStatus();
+  if(state.selection)await watchAndLoad(true,!state.snapshot);
+  if(state.selection&&state.snapshot){setTimeout(()=>{if(shouldAutoOfferInstall()){state.installModal=true;render()}else if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},900)}
+  render();
+  setTimeout(refreshLoop,state.snapshot?CLOUD_REFRESH_MS:PENDING_REFRESH_MS);
 }
 function temporalUiSignature(){
   if(!state.snapshot)return '';
@@ -539,7 +627,8 @@ setInterval(()=>{
 
 window.addEventListener('offline',()=>{clearCachedRecovery();state.offline=true;state.usingCached=!!state.snapshot;render()});
 window.addEventListener('online',()=>{state.offline=false;cachedRecoveryStep=0;clearCachedRecovery();if(state.selection)watchAndLoad(true).then(refreshPushStatus).then(render).catch(()=>render())});
-window.addEventListener('pageshow',e=>{
+window.addEventListener('pageshow',async e=>{
+  if(await ensureLatestClient(true))return;
   if(state.selection&&(e.persisted||state.usingCached||state.offline||Date.now()-lastLoadAt>30*1000)){
     state.offline=!navigator.onLine;
     if(!state.offline){cachedRecoveryStep=0;clearCachedRecovery()}
@@ -547,13 +636,16 @@ window.addEventListener('pageshow',e=>{
   }
 });
 
-document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible'&&state.selection&&(state.usingCached||state.offline||Date.now()-lastLoadAt>30*1000)){
+document.addEventListener('visibilitychange',async()=>{
+  if(document.visibilityState!=='visible')return;
+  if(await ensureLatestClient(true))return;
+  if(state.selection&&(state.usingCached||state.offline||Date.now()-lastLoadAt>30*1000)){
     state.offline=!navigator.onLine;
     watchAndLoad(state.usingCached||state.offline).then(refreshPushStatus).then(render).catch(()=>{});
-  }else if(document.visibilityState==='visible'&&state.snapshot){
+  }else if(state.snapshot){
     const signature=temporalUiSignature();
     if(signature!==lastTemporalUiSignature){lastTemporalUiSignature=signature;render()}
   }
 });
+setInterval(()=>{if(document.visibilityState==='visible')ensureLatestClient(false)},CLIENT_UPDATE_CHECK_MS);
 init();

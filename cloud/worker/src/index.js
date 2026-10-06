@@ -4,8 +4,9 @@ import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.10.3-cloud";
+const APP_VERSION = "1.11.0-cloud";
 const LEGAL_VERSION = "2026-09-30";
+const FRONTEND_VERSION = "16.5.0";
 const INTEREST_TTL_HOURS = 6;
 const INTEREST_TOUCH_MINUTES = 15;
 const CATALOG_REFRESH_HOURS = 24;
@@ -1049,7 +1050,7 @@ function mapResponse(roomCode) {
 async function route(request, env) {
   const url = new URL(request.url), path = url.pathname;
   if (path === "/health" && request.method === "GET") return health(env);
-  if (path === "/api/meta" && request.method === "GET") return json({ version: APP_VERSION, operator_name: env.OPERATOR_NAME || "Independent TUS Companion project", contact_email: env.CONTACT_EMAIL || "", legal_version: LEGAL_VERSION });
+  if (path === "/api/meta" && request.method === "GET") return json({ version: APP_VERSION, frontend_version: FRONTEND_VERSION, operator_name: env.OPERATOR_NAME || "Independent TUS Companion project", contact_email: env.CONTACT_EMAIL || "", legal_version: LEGAL_VERSION });
   if (path === "/api/catalog" && request.method === "GET") return catalog(env);
   if (path === "/api/watch" && request.method === "POST") {
     if (rateLimitExceeded(request, "watch", 60)) return json({ detail: "rate-limit" }, 429, { "retry-after": "60" });
@@ -1102,7 +1103,14 @@ export default {
       await ensureReminderSchema(env);
       const url = new URL(request.url);
       if (url.pathname === "/health" || url.pathname.startsWith("/api/")) return securityHeaders(await route(request, env));
-      return securityHeaders(await env.ASSETS.fetch(request));
+      const asset = await env.ASSETS.fetch(request);
+      if (request.mode === "navigate" || url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/sw.js") {
+        const headers = new Headers(asset.headers);
+        headers.set("cache-control", "no-store, max-age=0, must-revalidate");
+        headers.set("pragma", "no-cache");
+        return securityHeaders(new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers }));
+      }
+      return securityHeaders(asset);
     } catch (err) {
       console.error(err);
       return securityHeaders(apiError(500, "internal-error"));

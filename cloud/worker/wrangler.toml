@@ -25,7 +25,7 @@ queue = "tus-companion-sync"
 max_batch_size = 1
 max_batch_timeout = 1
 max_retries = 5
-max_concurrency = 1
+max_concurrency = 2
 retry_delay = 90
 
 [vars]
