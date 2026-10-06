@@ -56,7 +56,7 @@ test("mobile keeps pinch zoom available and avoids iOS form-focus zoom",async({p
 test("service worker updates cannot strand an old frontend",async({page})=>{
   await mockApi(page);
   await page.goto("/");
-  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.4.2",{cache:"no-store"}).then(r=>r.text()));
+  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.5.0",{cache:"no-store"}).then(r=>r.text()));
   expect(source).toContain("navigator.serviceWorker.addEventListener('controllerchange'");
   expect(source).toContain("window.location.reload()");
   expect(source).toContain("swControllerSeen");
@@ -166,4 +166,53 @@ test("Week cards keep long course names fully visible",async({page})=>{
   await expect(card.locator("strong")).toContainText("Advanced Structural Analysis");
   const clipped=await card.evaluate(el=>el.scrollHeight>el.clientHeight+1);
   expect(clipped).toBeFalsy();
+});
+
+
+test("installed PWA actively upgrades to the newest client shell",async({page})=>{
+  await mockApi(page);
+  await page.goto("/");
+  const appSource=await page.evaluate(async()=>await fetch("/app.js?v=16.5.0",{cache:"no-store"}).then(r=>r.text()));
+  const swSource=await page.evaluate(async()=>await fetch("/sw.js",{cache:"no-store"}).then(r=>r.text()));
+  expect(appSource).toContain("const CLIENT_VERSION='16.5.0'");
+  expect(appSource).toContain("ensureLatestClient");
+  expect(appSource).toContain("visibilitychange");
+  expect(swSource).toContain("client.navigate");
+  expect(swSource).toContain("includeUncontrolled:true");
+  expect(swSource).toContain("tus-companion-v16.5.0");
+});
+
+test("first open of a stale course waits for fresh data before showing the timetable",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  const stale=snapshot();
+  stale.events=stale.events.map(e=>({...e,module:"STALE COURSE DATA"}));
+  stale.fetched_at=new Date(Date.now()-6*60*60*1000).toISOString();
+  const fresh=snapshot();
+  fresh.events=fresh.events.map((e,i)=>i===0?{...e,module:"Fresh current timetable"}:e);
+  fresh.fetched_at=new Date().toISOString();
+  let timetableCalls=0;
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.11.0-cloud",frontend_version:"16.5.0",contact_email:""});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:new Date(Date.now()-6*60*60*1000).toISOString()}});
+    if(path==="/api/timetable/g1"){
+      timetableCalls++;
+      if(timetableCalls<3)return json({snapshot:stale,sync:{group_id:"g1",status:"queued",last_success_at:new Date(Date.now()-6*60*60*1000).toISOString()}});
+      return json({snapshot:fresh,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    }
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/sync-status/g1")return json({group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:new Date(Date.now()-6*60*60*1000).toISOString()});
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/");
+  await page.selectOption("#dep","dep1");
+  await page.selectOption("#grp","g1");
+  await page.click("#save");
+  await expect(page.locator(".hero")).toBeVisible({timeout:12000});
+  await expect(page.locator("body")).toContainText("Fresh current timetable");
+  await expect(page.locator("body")).not.toContainText("STALE COURSE DATA");
+  expect(timetableCalls).toBeGreaterThanOrEqual(3);
 });

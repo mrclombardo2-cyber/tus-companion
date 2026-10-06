@@ -60,3 +60,9 @@ test("valid empty weeks are not rejected by the worker sync path", () => {
   const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
   assert.doesNotMatch(source, /empty-timetable-response/);
 });
+
+
+test("on-demand timetable work has a second queue lane", () => {
+  const wrangler = readFileSync(new URL("../cloud/worker/wrangler.toml", import.meta.url), "utf8");
+  assert.match(wrangler, /max_concurrency = 2/);
+});

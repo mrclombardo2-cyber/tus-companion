@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v16.4.2
+name: Deploy Cloudflare Worker v16.5.0
 
 on:
   workflow_dispatch:
@@ -154,7 +154,7 @@ jobs:
           for attempt in $(seq 1 12); do
             health="$(curl --fail --silent --show-error "$base/health")"
             live_version="$(printf '%s\n' "$health" | jq -r '.version // ""')"
-            if [ "$live_version" = "1.10.3-cloud" ]; then
+            if [ "$live_version" = "1.11.0-cloud" ]; then
               version_ok=true
               break
             fi
@@ -168,8 +168,14 @@ jobs:
 
           before="$(printf '%s\n' "$health" | jq -r '.collector.last_cycle_finished_at // ""')"
 
-          echo "Checking public catalog..."
+          echo "Checking public app metadata and catalog..."
+          meta="$(curl --fail --silent --show-error "$base/api/meta")"
+          printf '%s\n' "$meta" | jq -e '.version == "1.11.0-cloud" and .frontend_version == "16.5.0"' >/dev/null
           curl --fail --silent --show-error "$base/api/catalog" | jq -e '.departments | length > 0' >/dev/null
+
+          echo "Checking PWA shell cache policy..."
+          curl --fail --silent --show-error -D /tmp/sw-headers -o /dev/null "$base/sw.js"
+          grep -qi '^cache-control:.*no-store' /tmp/sw-headers
 
           echo "Waiting for scheduler and automatic source-session recovery..."
           ok=false
