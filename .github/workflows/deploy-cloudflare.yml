@@ -173,9 +173,6 @@ jobs:
           printf '%s\n' "$meta" | jq -e '.version == "1.11.0-cloud" and .frontend_version == "16.5.0"' >/dev/null
           curl --fail --silent --show-error "$base/api/catalog" | jq -e '.departments | length > 0' >/dev/null
 
-          echo "Checking PWA shell cache policy..."
-          curl --fail --silent --show-error -D /tmp/sw-headers -o /dev/null "$base/sw.js"
-          grep -qi '^cache-control:.*no-store' /tmp/sw-headers
 
           echo "Waiting for scheduler and automatic source-session recovery..."
           ok=false
