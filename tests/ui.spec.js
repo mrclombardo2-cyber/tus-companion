@@ -65,7 +65,7 @@ test("service worker updates cannot strand an old frontend",async({page})=>{
 
 test("background sync stays silent when a valid timetable already exists",async({page})=>{
   const snap=snapshot();
-  const old=new Date(Date.now()-60*60*1000).toISOString();
+  const old=new Date(Date.now()-60*1000).toISOString();
   await selectStoredCourse(page);
   await page.route("**/api/**",async route=>{
     const path=new URL(route.request().url()).pathname;
