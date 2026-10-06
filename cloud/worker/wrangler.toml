@@ -20,13 +20,25 @@ binding = "BROWSER"
 binding = "SYNC_QUEUE"
 queue = "tus-companion-sync"
 
+[[queues.producers]]
+binding = "PRIORITY_QUEUE"
+queue = "tus-companion-priority"
+
 [[queues.consumers]]
 queue = "tus-companion-sync"
 max_batch_size = 1
 max_batch_timeout = 1
 max_retries = 5
-max_concurrency = 2
+max_concurrency = 1
 retry_delay = 90
+
+[[queues.consumers]]
+queue = "tus-companion-priority"
+max_batch_size = 1
+max_batch_timeout = 1
+max_retries = 5
+max_concurrency = 1
+retry_delay = 30
 
 [vars]
 OPERATOR_NAME = "Independent TUS Companion project"

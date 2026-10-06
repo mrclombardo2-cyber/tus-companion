@@ -62,7 +62,11 @@ test("valid empty weeks are not rejected by the worker sync path", () => {
 });
 
 
-test("on-demand timetable work has a second queue lane", () => {
+test("interactive timetable refreshes use a dedicated priority queue", () => {
+  const worker = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
   const wrangler = readFileSync(new URL("../cloud/worker/wrangler.toml", import.meta.url), "utf8");
-  assert.match(wrangler, /max_concurrency = 2/);
+  assert.match(worker, /env\.PRIORITY_QUEUE \|\| env\.SYNC_QUEUE/);
+  assert.match(worker, /priority: "interactive"/);
+  assert.match(wrangler, /binding = "PRIORITY_QUEUE"/);
+  assert.match(wrangler, /queue = "tus-companion-priority"/);
 });

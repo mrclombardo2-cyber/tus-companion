@@ -193,7 +193,8 @@ function ageMs(iso) {
 }
 
 async function queueSingleGroupIfNeeded(env, groupId, departmentId, currentSync = null) {
-  if (!env.SYNC_QUEUE) return currentSync;
+  const queue = env.PRIORITY_QUEUE || env.SYNC_QUEUE;
+  if (!queue) return currentSync;
   const sync = currentSync || await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
   const recentlyQueued = sync && ["queued", "syncing"].includes(sync.status) && ageMs(sync.last_attempt_at) < QUEUED_STALE_MINUTES * 60_000;
   const recentlySynced = sync?.last_success_at && ageMs(sync.last_success_at) < GROUP_SYNC_MIN_SECONDS * 1000;
@@ -204,7 +205,7 @@ async function queueSingleGroupIfNeeded(env, groupId, departmentId, currentSync 
     "INSERT INTO sync_state(group_id,last_attempt_at,last_success_at,status,error) VALUES(?,?,?,?,?) " +
     "ON CONFLICT(group_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,status=excluded.status,error=NULL",
   ).bind(groupId, stamp, sync?.last_success_at || null, "queued", null).run();
-  await env.SYNC_QUEUE.send({ type: "groups", groups: [{ group_id: groupId, department_id: departmentId }] });
+  await queue.send({ type: "groups", priority: "interactive", groups: [{ group_id: groupId, department_id: departmentId }] });
   return { ...(sync || {}), group_id: groupId, last_attempt_at: stamp, status: "queued", error: null };
 }
 
