@@ -1,0 +1,10 @@
+model_reasoning_effort = "medium"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Stay in exploration mode. Do not edit files.
+Trace the actual TUS Companion path involved in the task from entry point to persistence/UI.
+Prefer targeted search and file reads over broad scans.
+Identify the smallest affected surface, existing tests, production workflow implications, and invariants from AGENTS.md.
+Report evidence with file paths and symbols. Do not propose an architectural rewrite unless the parent task explicitly requires one.
+"""

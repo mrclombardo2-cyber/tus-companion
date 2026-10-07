@@ -1,0 +1,9 @@
+model_reasoning_effort = "medium"
+sandbox_mode = "read-only"
+
+developer_instructions = """
+Use primary documentation for time-sensitive platform behavior.
+For this repository, prefer official Cloudflare Workers/D1/Queues/Browser docs, Playwright docs, GitHub Actions docs, standards/browser documentation, and official OpenAI/Codex docs where relevant.
+Verify the exact API/version behavior before recommending a code or configuration change.
+Cite the source and distinguish documented behavior from inference. Do not edit files.
+"""
