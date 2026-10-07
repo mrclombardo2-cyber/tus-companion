@@ -3,6 +3,20 @@ $ErrorActionPreference = "Stop"
 $EccRepo = "affaan-m/ECC"
 $EccRef = "v2.2.3"
 
+function Invoke-CodexCommand {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [string]$Description
+    )
+
+    & codex @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code $LASTEXITCODE."
+    }
+}
+
 Write-Host "TUS Companion - Codex + ECC setup" -ForegroundColor Cyan
 
 $codex = Get-Command codex -ErrorAction SilentlyContinue
@@ -10,22 +24,21 @@ if (-not $codex) {
     throw "Codex CLI was not found in PATH. Install/update Codex first, then run this script again."
 }
 
-Write-Host "Codex:" (codex --version)
+Invoke-CodexCommand -Arguments @("--version") -Description "Codex version check"
 
 Write-Host "Adding/updating ECC marketplace at $EccRef..."
-try {
-    codex plugin marketplace add $EccRepo --ref $EccRef
-} catch {
-    Write-Host "Marketplace add returned an error; checking existing marketplace state..."
+& codex plugin marketplace add $EccRepo --ref $EccRef
+if ($LASTEXITCODE -ne 0) {
+    Write-Warning "Marketplace add returned a non-zero exit code. Verifying the existing marketplace before continuing..."
 }
 
-codex plugin marketplace list
+Invoke-CodexCommand -Arguments @("plugin", "marketplace", "list") -Description "Marketplace verification"
 
 Write-Host "Installing/refreshing native ECC plugin..."
-codex plugin add ecc@ecc
+Invoke-CodexCommand -Arguments @("plugin", "add", "ecc@ecc") -Description "ECC plugin installation"
 
 Write-Host "Verifying plugin registration..."
-codex plugin list --json
+Invoke-CodexCommand -Arguments @("plugin", "list", "--json") -Description "ECC plugin verification"
 
 Write-Host ""
 Write-Host "Repository setup complete." -ForegroundColor Green
