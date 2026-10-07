@@ -7,14 +7,14 @@
 approval_policy = "on-request"
 sandbox_mode = "workspace-write"
 web_search = "live"
-persistent_instructions = "Follow the repository AGENTS.md exactly. Prefer minimal, reversible diffs. Treat deploys, merges to main, production data changes, Cloudflare resource changes, and secret changes as external actions requiring explicit user approval."
+developer_instructions = "Follow the repository AGENTS.md exactly. Prefer minimal, reversible diffs. Treat deploys, merges to main, production data changes, Cloudflare resource changes, and secret changes as external actions requiring explicit user approval."
 
 [features]
 multi_agent = true
 
 [agents]
-max_threads = 4
-max_depth = 1
+enabled = true
+default_subagent_reasoning_effort = "medium"
 
 [agents.explorer]
 description = "Read-only TUS Companion codebase explorer. Trace the real execution path and gather evidence before edits."
