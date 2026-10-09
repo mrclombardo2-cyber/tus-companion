@@ -73,20 +73,21 @@ test("all timetable source access is serialized through one queue", () => {
 });
 
 
-test("snapshot validation rejects cross-group source races but allows an empty valid week", () => {
+test("snapshot validation matches compact catalog IDs to full TUS group labels", () => {
   const valid = {
-    student_group: "AL_BBSTD_C_2 B",
+    student_group: "Al_Bbstd_C_2 Higher Certificate In Business B (Sem1)",
     week_number: 41,
     week_start: "2026-10-05",
     week_end: "2026-10-11",
-    events: [],
+    events: [{
+      day:"Monday", date:"2026-10-05", module:"Management Accounting", start:"09:00", end:"10:00",
+      student_groups:["AL_BBSTD_C_2 Higher Certificate in Business A","AL_BBSTD_C_2 Higher Certificate in Business B (Sem1)"],
+    }],
   };
   assert.equal(validateSnapshotForGroup(valid, "AL_BBSTD_C_2 B"), valid);
-  const wrong = {
-    ...valid,
-    student_group: "Display label",
-    events: [{ day:"Monday", date:"2026-10-05", module:"Wrong course", start:"09:00", end:"10:00", student_groups:["AL_OTHER_1 A"] }],
-  };
+  const empty = { ...valid, events: [] };
+  assert.equal(validateSnapshotForGroup(empty, "AL_BBSTD_C_2 B"), empty);
+  const wrong = { ...valid, student_group:"Al_Bbstd_C_2 Higher Certificate In Business A" };
   assert.throws(() => validateSnapshotForGroup(wrong, "AL_BBSTD_C_2 B"), /timetable-group-mismatch/);
 });
 
