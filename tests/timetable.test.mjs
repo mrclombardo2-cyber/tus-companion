@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { compactWeekSnapshot, diffSnapshots, enrichChanges, suppressTransientReversals, validateSnapshotForGroup } from "../cloud/worker/src/timetable.js";
+import { timetableOutputGroup } from "../cloud/worker/src/scientia.js";
 
 test("compactWeekSnapshot keeps only week metadata and events", () => {
   const input = {
@@ -122,4 +123,14 @@ test("worker confirms changed snapshots before saving or pushing them", () => {
   assert.match(source, /confirmChangedSnapshot/);
   assert.match(source, /secondHash === thirdHash/);
   assert.match(source, /unstable-timetable-source/);
+});
+
+
+test("Scientia output group is extracted and verified before snapshots can be saved", () => {
+  const html = "<div>Student Set TextSpreadsheet Student Group: AL_BBSTD_C_2 B Weeks selected for output: 41 (5 Oct 2026 - 11 Oct 2026)</div>";
+  assert.equal(timetableOutputGroup(html), "AL_BBSTD_C_2 B");
+  const source = readFileSync(new URL("../cloud/worker/src/scientia.js", import.meta.url), "utf8");
+  assert.match(source, /postback\(html, "dlObject"/);
+  assert.match(source, /timetableMatchesGroup\(timetable, group\)/);
+  assert.match(source, /attempt < 3/);
 });
