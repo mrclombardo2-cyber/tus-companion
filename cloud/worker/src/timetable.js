@@ -172,6 +172,37 @@ export function compactWeekSnapshot(snapshot, fallbackFetchedAt = new Date().toI
   };
 }
 
+
+function canonicalGroup(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+
+export function validateSnapshotForGroup(snapshot, expectedGroup) {
+  if (!snapshot || typeof snapshot !== "object") throw new Error("invalid-timetable-snapshot");
+  if (!Array.isArray(snapshot.events)) throw new Error("invalid-timetable-events");
+  if (!Number.isFinite(Number(snapshot.week_number)) || !snapshot.week_start || !snapshot.week_end) {
+    throw new Error("invalid-timetable-week");
+  }
+  const actual = canonicalGroup(snapshot.student_group);
+  const expected = canonicalGroup(expectedGroup);
+  if (!actual || actual === "UNKNOWN" || !expected || actual !== expected) {
+    throw new Error("timetable-group-mismatch");
+  }
+  for (const event of snapshot.events) {
+    if (!event || !event.module || !event.start || !event.end || !event.date) throw new Error("invalid-timetable-event");
+    if (event.date < snapshot.week_start || event.date > snapshot.week_end) throw new Error("timetable-event-outside-week");
+  }
+  return snapshot;
+}
+
+function sameWeek(before, after) {
+  if (!before || !after) return false;
+  const bw = Number(before.week_number), aw = Number(after.week_number);
+  if (Number.isFinite(bw) && Number.isFinite(aw) && bw !== aw) return false;
+  if (before.week_start && after.week_start && before.week_start !== after.week_start) return false;
+  return true;
+}
+
 function stableKey(e) {
   return JSON.stringify([
     String(e.day || "").toLowerCase(),
@@ -208,7 +239,7 @@ function pair(before, after) {
 }
 
 export function diffSnapshots(before, after, detectedAt = new Date().toISOString()) {
-  if (!before) return [];
+  if (!before || !sameWeek(before, after)) return [];
   const bmap = new Map(), amap = new Map();
   for (const e of before.events || []) {
     const k = stableKey(e); if (!bmap.has(k)) bmap.set(k, []); bmap.get(k).push(e);
@@ -266,7 +297,50 @@ export async function snapshotContentHash(snapshot) {
 export async function enrichChanges(groupId, changes) {
   const out = [];
   for (const ch of changes) {
-    out.push({ ...ch, dedupe_hash: await sha256(`${groupId}|${stableStringify(ch)}`) });
+    const { detected_at: _detectedAt, ...identity } = ch || {};
+    out.push({ ...ch, dedupe_hash: await sha256(`${groupId}|${stableStringify(identity)}`) });
   }
   return out;
+}
+
+function changeEventPayload(change) {
+  if (!change) return null;
+  if (change.change_type === "CLASS_ADDED") return change.after || null;
+  if (change.change_type === "CLASS_REMOVED") return change.before || null;
+  return null;
+}
+
+function inversePair(a, b) {
+  if (!a || !b) return false;
+  if (a.change_type === "CLASS_ADDED" && b.change_type === "CLASS_REMOVED") {
+    return stableStringify(changeEventPayload(a)) === stableStringify(changeEventPayload(b));
+  }
+  if (a.change_type === "CLASS_REMOVED" && b.change_type === "CLASS_ADDED") {
+    return stableStringify(changeEventPayload(a)) === stableStringify(changeEventPayload(b));
+  }
+  if (a.change_type !== b.change_type) return false;
+  return stableStringify(a.before || null) === stableStringify(b.after || null) &&
+    stableStringify(a.after || null) === stableStringify(b.before || null);
+}
+
+export function suppressTransientReversals(changes, windowMs = 15 * 60_000) {
+  const rows = [...(Array.isArray(changes) ? changes : [])].sort((a, b) =>
+    Date.parse(a.detected_at || 0) - Date.parse(b.detected_at || 0) || Number(a.id || 0) - Number(b.id || 0));
+  const hidden = new Set();
+  for (let i = 0; i < rows.length; i++) {
+    if (hidden.has(i)) continue;
+    const ai = Date.parse(rows[i].detected_at || "");
+    if (!Number.isFinite(ai)) continue;
+    for (let j = i + 1; j < rows.length; j++) {
+      if (hidden.has(j)) continue;
+      const bj = Date.parse(rows[j].detected_at || "");
+      if (!Number.isFinite(bj) || bj - ai > windowMs) break;
+      if (inversePair(rows[i], rows[j])) {
+        hidden.add(i);
+        hidden.add(j);
+        break;
+      }
+    }
+  }
+  return rows.filter((_, i) => !hidden.has(i)).sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
 }
