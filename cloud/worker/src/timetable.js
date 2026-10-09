@@ -178,7 +178,8 @@ function canonicalGroup(value) {
 }
 
 function escapeRegExp(value) {
-  return String(value || "").replace(/[.*+?^$()|[\]\\{}]/g, (ch) => "\\" + ch);
+  const special = "\\^$.*+?()[]{}|";
+  return [...String(value || "")].map((ch) => special.includes(ch) ? "\\" + ch : ch).join("");
 }
 
 function groupLabelMatches(actualValue, expectedValue) {
