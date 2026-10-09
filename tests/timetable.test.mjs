@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { compactWeekSnapshot } from "../cloud/worker/src/timetable.js";
+import { compactWeekSnapshot, diffSnapshots, enrichChanges, suppressTransientReversals, validateSnapshotForGroup } from "../cloud/worker/src/timetable.js";
 
 test("compactWeekSnapshot keeps only week metadata and events", () => {
   const input = {
@@ -62,11 +62,64 @@ test("valid empty weeks are not rejected by the worker sync path", () => {
 });
 
 
-test("interactive timetable refreshes use a dedicated priority queue", () => {
+test("all timetable source access is serialized through one queue", () => {
   const worker = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
   const wrangler = readFileSync(new URL("../cloud/worker/wrangler.toml", import.meta.url), "utf8");
-  assert.match(worker, /env\.PRIORITY_QUEUE \|\| env\.SYNC_QUEUE/);
-  assert.match(worker, /priority: "interactive"/);
-  assert.match(wrangler, /binding = "PRIORITY_QUEUE"/);
-  assert.match(wrangler, /queue = "tus-companion-priority"/);
+  assert.match(worker, /const queue = env\.SYNC_QUEUE;/);
+  assert.doesNotMatch(worker, /PRIORITY_QUEUE/);
+  assert.doesNotMatch(wrangler, /PRIORITY_QUEUE/);
+  assert.equal((wrangler.match(/\[\[queues\.consumers\]\]/g) || []).length, 1);
+});
+
+
+test("snapshot validation rejects cross-group source races but allows an empty valid week", () => {
+  const valid = {
+    student_group: "AL_BBSTD_C_2 B",
+    week_number: 41,
+    week_start: "2026-10-05",
+    week_end: "2026-10-11",
+    events: [],
+  };
+  assert.equal(validateSnapshotForGroup(valid, "AL_BBSTD_C_2 B"), valid);
+  assert.throws(() => validateSnapshotForGroup({ ...valid, student_group: "AL_OTHER_1 A" }, "AL_BBSTD_C_2 B"), /timetable-group-mismatch/);
+});
+
+test("week rollover never generates timetable change notifications", () => {
+  const before = {
+    week_number: 41, week_start: "2026-10-05",
+    events: [{ day:"Monday", module:"A", activity:"Lecture", student_groups:["G"], start:"09:00", end:"10:00" }],
+  };
+  const after = {
+    week_number: 42, week_start: "2026-10-12",
+    events: [{ day:"Monday", module:"B", activity:"Lecture", student_groups:["G"], start:"11:00", end:"12:00" }],
+  };
+  assert.deepEqual(diffSnapshots(before, after), []);
+});
+
+test("change dedupe hash ignores detection timestamp", async () => {
+  const base = {
+    change_type:"CLASS_ADDED", module:"A", activity:"Lecture", day:"Monday", before:null,
+    after:{ day:"Monday", module:"A", activity:"Lecture", start:"09:00", end:"10:00" },
+  };
+  const [a] = await enrichChanges("G1", [{ ...base, detected_at:"2026-10-09T15:36:00.000Z" }]);
+  const [b] = await enrichChanges("G1", [{ ...base, detected_at:"2026-10-09T15:38:00.000Z" }]);
+  assert.equal(a.dedupe_hash, b.dedupe_hash);
+});
+
+test("short-lived add/remove reversals are suppressed from the Changes feed", () => {
+  const event = { day:"Wednesday", module:"Management Accounting", activity:"Lecture", start:"15:00", end:"16:00" };
+  const rows = [
+    { id:1, detected_at:"2026-10-09T15:36:00.000Z", change_type:"CLASS_ADDED", before:null, after:event },
+    { id:2, detected_at:"2026-10-09T15:37:00.000Z", change_type:"CLASS_REMOVED", before:event, after:null },
+    { id:3, detected_at:"2026-10-09T15:40:00.000Z", change_type:"ROOM_CHANGED", before:{...event,room_code:"C74"}, after:{...event,room_code:"C75"} },
+  ];
+  const out = suppressTransientReversals(rows);
+  assert.deepEqual(out.map((x) => x.id), [3]);
+});
+
+test("worker confirms changed snapshots before saving or pushing them", () => {
+  const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  assert.match(source, /confirmChangedSnapshot/);
+  assert.match(source, /secondHash === thirdHash/);
+  assert.match(source, /unstable-timetable-source/);
 });
