@@ -185,13 +185,28 @@ export function validateSnapshotForGroup(snapshot, expectedGroup) {
   }
   const actual = canonicalGroup(snapshot.student_group);
   const expected = canonicalGroup(expectedGroup);
-  if (!actual || actual === "UNKNOWN" || !expected || actual !== expected) {
-    throw new Error("timetable-group-mismatch");
-  }
+  if (!expected) throw new Error("timetable-group-mismatch");
+  let groupEvidence = 0;
+  let groupMatches = 0;
   for (const event of snapshot.events) {
     if (!event || !event.module || !event.start || !event.end || !event.date) throw new Error("invalid-timetable-event");
     if (event.date < snapshot.week_start || event.date > snapshot.week_end) throw new Error("timetable-event-outside-week");
+    const groups = Array.isArray(event.student_groups) ? event.student_groups.map(canonicalGroup).filter(Boolean) : [];
+    if (groups.length) {
+      groupEvidence++;
+      if (groups.includes(expected)) groupMatches++;
+    }
   }
+  const headerMatches = Boolean(actual && actual !== "UNKNOWN" && actual === expected);
+  if (snapshot.events.length && groupEvidence && groupMatches !== groupEvidence && !headerMatches) {
+    throw new Error("timetable-group-mismatch");
+  }
+  if (snapshot.events.length && !groupEvidence && !headerMatches) {
+    throw new Error("timetable-group-mismatch");
+  }
+  // A genuinely empty teaching week has no row-level group evidence. Keep it valid
+  // as long as the week metadata itself parsed correctly; change confirmation
+  // prevents an empty transient response from replacing a populated timetable.
   return snapshot;
 }
 
