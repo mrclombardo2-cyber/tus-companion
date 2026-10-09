@@ -1,7 +1,7 @@
 import webpush from "web-push";
 import { launch } from "@cloudflare/playwright";
 import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
-import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot } from "./timetable.js";
+import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot, validateSnapshotForGroup, suppressTransientReversals } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
 const APP_VERSION = "1.11.2-cloud";
@@ -193,7 +193,7 @@ function ageMs(iso) {
 }
 
 async function queueSingleGroupIfNeeded(env, groupId, departmentId, currentSync = null) {
-  const queue = env.PRIORITY_QUEUE || env.SYNC_QUEUE;
+  const queue = env.SYNC_QUEUE;
   if (!queue) return currentSync;
   const sync = currentSync || await env.DB.prepare("SELECT * FROM sync_state WHERE group_id=?").bind(groupId).first();
   const recentlyQueued = sync && ["queued", "syncing"].includes(sync.status) && ageMs(sync.last_attempt_at) < QUEUED_STALE_MINUTES * 60_000;
@@ -205,7 +205,7 @@ async function queueSingleGroupIfNeeded(env, groupId, departmentId, currentSync 
     "INSERT INTO sync_state(group_id,last_attempt_at,last_success_at,status,error) VALUES(?,?,?,?,?) " +
     "ON CONFLICT(group_id) DO UPDATE SET last_attempt_at=excluded.last_attempt_at,status=excluded.status,error=NULL",
   ).bind(groupId, stamp, sync?.last_success_at || null, "queued", null).run();
-  await queue.send({ type: "groups", priority: "interactive", groups: [{ group_id: groupId, department_id: departmentId }] });
+  await queue.send({ type: "groups", groups: [{ group_id: groupId, department_id: departmentId }] });
   return { ...(sync || {}), group_id: groupId, last_attempt_at: stamp, status: "queued", error: null };
 }
 
@@ -284,14 +284,16 @@ async function syncStatus(env, groupId) {
 async function changes(env, groupId, url) {
   const raw = Number(url.searchParams.get("limit") || 50);
   const limit = Math.max(1, Math.min(200, Number.isFinite(raw) ? raw : 50));
+  const scanLimit = Math.min(200, Math.max(limit, limit * 4));
   const res = await env.DB.prepare(
     "SELECT id,group_id,detected_at,change_type,module,activity,day,before_json,after_json FROM changes WHERE group_id=? ORDER BY id DESC LIMIT ?",
-  ).bind(groupId, limit).all();
-  return json((res.results || []).map((r) => ({
+  ).bind(groupId, scanLimit).all();
+  const mapped = (res.results || []).map((r) => ({
     id: r.id, group_id: r.group_id, detected_at: r.detected_at, change_type: r.change_type,
     module: r.module, activity: r.activity, day: r.day,
     before: safeParse(r.before_json, null), after: safeParse(r.after_json, null),
-  })));
+  }));
+  return json(suppressTransientReversals(mapped).slice(0, limit));
 }
 
 async function pushSubscribe(request, env) {
@@ -886,6 +888,46 @@ async function markSyncing(env, groupId) {
   ).bind(groupId, stamp, null, "syncing", null).run();
 }
 
+function snapshotScheduleShape(snapshot) {
+  return {
+    student_group: snapshot?.student_group || null,
+    group_id: snapshot?.group_id || null,
+    department_id: snapshot?.department_id || null,
+    week_number: snapshot?.week_number ?? null,
+    week_start: snapshot?.week_start || null,
+    week_end: snapshot?.week_end || null,
+    events: Array.isArray(snapshot?.events) ? snapshot.events : [],
+  };
+}
+
+async function fetchValidatedWeek(scientia, departmentId, groupId, week) {
+  const html = await scientia.fetchTimetable(departmentId, groupId, week);
+  const snapshot = parseTextSpreadsheet(html);
+  validateSnapshotForGroup(snapshot, groupId);
+  snapshot.group_id = groupId;
+  snapshot.department_id = departmentId;
+  return snapshot;
+}
+
+async function confirmChangedSnapshot(scientia, departmentId, groupId, previous, first) {
+  const changes = diffSnapshots(previous, first);
+  if (!changes.length) return first;
+
+  const structural = changes.some((ch) => ch.change_type === "CLASS_ADDED" || ch.change_type === "CLASS_REMOVED");
+  const firstHash = await snapshotContentHash(snapshotScheduleShape(first));
+  const second = await fetchValidatedWeek(scientia, departmentId, groupId, "t");
+  const secondHash = await snapshotContentHash(snapshotScheduleShape(second));
+
+  if (!structural && firstHash === secondHash) return second;
+
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const third = await fetchValidatedWeek(scientia, departmentId, groupId, "t");
+  const thirdHash = await snapshotContentHash(snapshotScheduleShape(third));
+  if (secondHash === thirdHash) return third;
+
+  throw new Error("unstable-timetable-source");
+}
+
 async function syncOneGroup(env, scientia, item) {
   const groupId = String(item.group_id || ""), departmentId = String(item.department_id || "");
   if (!groupId || !departmentId) throw new Error("invalid-group-job");
@@ -894,10 +936,8 @@ async function syncOneGroup(env, scientia, item) {
     const existing = await env.DB.prepare("SELECT payload FROM latest_snapshots WHERE group_id=?").bind(groupId).first();
     const previous = safeParse(existing?.payload, null);
 
-    const html = await scientia.fetchTimetable(departmentId, groupId, "t");
-    const snapshot = parseTextSpreadsheet(html);
-    snapshot.group_id = groupId;
-    snapshot.department_id = departmentId;
+    let snapshot = await fetchValidatedWeek(scientia, departmentId, groupId, "t");
+    snapshot = await confirmChangedSnapshot(scientia, departmentId, groupId, previous, snapshot);
 
     // Keep the normal Week UI and change detection scoped to ThisWeek, but cache
     // Next Week separately so the Today hero can always show the next real class.
@@ -907,8 +947,8 @@ async function syncOneGroup(env, scientia, item) {
     const nextWeekAge = ageMs(nextWeek?.fetched_at);
     const nextWeekStale = !nextWeek?.fetched_at || nextWeekAge >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
     if (!nextWeek || !nextWeekMatches || nextWeekStale) {
-      const nextHtml = await scientia.fetchTimetable(departmentId, groupId, "n");
-      nextWeek = compactWeekSnapshot(parseTextSpreadsheet(nextHtml));
+      const nextSnapshot = await fetchValidatedWeek(scientia, departmentId, groupId, "n");
+      nextWeek = compactWeekSnapshot(nextSnapshot);
     }
     snapshot.next_week = nextWeek;
 
