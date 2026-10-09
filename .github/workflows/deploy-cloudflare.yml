@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v16.5.2
+name: Deploy Cloudflare Worker v16.5.3
 
 on:
   workflow_dispatch:
@@ -134,7 +134,6 @@ jobs:
           preCommands: |
             npm install --ignore-scripts
             npx --yes wrangler@4.143.0 queues info tus-companion-sync >/dev/null 2>&1 || npx --yes wrangler@4.143.0 queues create tus-companion-sync
-            npx --yes wrangler@4.143.0 queues info tus-companion-priority >/dev/null 2>&1 || npx --yes wrangler@4.143.0 queues create tus-companion-priority
           command: deploy
         env:
           ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
@@ -155,7 +154,7 @@ jobs:
           for attempt in $(seq 1 12); do
             health="$(curl --fail --silent --show-error "$base/health")"
             live_version="$(printf '%s\n' "$health" | jq -r '.version // ""')"
-            if [ "$live_version" = "1.11.2-cloud" ]; then
+            if [ "$live_version" = "1.11.3-cloud" ]; then
               version_ok=true
               break
             fi
@@ -171,7 +170,7 @@ jobs:
 
           echo "Checking public app metadata and catalog..."
           meta="$(curl --fail --silent --show-error "$base/api/meta")"
-          printf '%s\n' "$meta" | jq -e '.version == "1.11.2-cloud" and .frontend_version == "16.5.2"' >/dev/null
+          printf '%s\n' "$meta" | jq -e '.version == "1.11.3-cloud" and .frontend_version == "16.5.3"' >/dev/null
           curl --fail --silent --show-error "$base/api/catalog" | jq -e '.departments | length > 0' >/dev/null
 
 
