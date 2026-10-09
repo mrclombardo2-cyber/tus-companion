@@ -134,3 +134,10 @@ test("Scientia output group is extracted and verified before snapshots can be sa
   assert.match(source, /timetableMatchesGroup\(timetable, group\)/);
   assert.match(source, /attempt < 3/);
 });
+
+
+test("rejected transient timetable snapshots retry quickly", () => {
+  const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  assert.match(source, /timetable-group-mismatch\|unstable-timetable-source/);
+  assert.match(source, /delaySeconds: 10/);
+});
