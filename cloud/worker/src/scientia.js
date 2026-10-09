@@ -314,9 +314,9 @@ export class ScientiaSession {
       });
       const timetable = await this.request(TUS_SHOW_URL);
       if (!/Student Set TextSpreadsheet/i.test(timetable)) throw new Error("unexpected-timetable-layout");
-      if (timetableMatchesGroup(timetable, group)) return timetable;
+      return timetable;
     }
-    throw new Error("timetable-group-mismatch");
+    throw new Error("unexpected-timetable-layout");
   }
 
   async scrapeCatalog() {
