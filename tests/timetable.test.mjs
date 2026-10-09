@@ -82,7 +82,12 @@ test("snapshot validation rejects cross-group source races but allows an empty v
     events: [],
   };
   assert.equal(validateSnapshotForGroup(valid, "AL_BBSTD_C_2 B"), valid);
-  assert.throws(() => validateSnapshotForGroup({ ...valid, student_group: "AL_OTHER_1 A" }, "AL_BBSTD_C_2 B"), /timetable-group-mismatch/);
+  const wrong = {
+    ...valid,
+    student_group: "Display label",
+    events: [{ day:"Monday", date:"2026-10-05", module:"Wrong course", start:"09:00", end:"10:00", student_groups:["AL_OTHER_1 A"] }],
+  };
+  assert.throws(() => validateSnapshotForGroup(wrong, "AL_BBSTD_C_2 B"), /timetable-group-mismatch/);
 });
 
 test("week rollover never generates timetable change notifications", () => {
@@ -126,13 +131,14 @@ test("worker confirms changed snapshots before saving or pushing them", () => {
 });
 
 
-test("Scientia output group is extracted and verified before snapshots can be saved", () => {
+test("Scientia forces group selection and worker retries row-level validation", () => {
   const html = "<div>Student Set TextSpreadsheet Student Group: AL_BBSTD_C_2 B Weeks selected for output: 41 (5 Oct 2026 - 11 Oct 2026)</div>";
   assert.equal(timetableOutputGroup(html), "AL_BBSTD_C_2 B");
-  const source = readFileSync(new URL("../cloud/worker/src/scientia.js", import.meta.url), "utf8");
-  assert.match(source, /postback\(html, "dlObject"/);
-  assert.match(source, /timetableMatchesGroup\(timetable, group\)/);
-  assert.match(source, /attempt < 3/);
+  const scientia = readFileSync(new URL("../cloud/worker/src/scientia.js", import.meta.url), "utf8");
+  const worker = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  assert.match(scientia, /postback\(html, "dlObject"/);
+  assert.match(worker, /attempt < 3/);
+  assert.match(worker, /validateSnapshotForGroup\(snapshot, groupId\)/);
 });
 
 
