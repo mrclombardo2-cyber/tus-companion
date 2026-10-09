@@ -1194,6 +1194,8 @@ export default {
         } else if (/source-session-decryption|source-session-not-configured|source-session-key|source-session-invalid-json/i.test(messageText)) {
           try { await setMetaValue(env, "source_session_error", messageText); } catch (metaErr) { console.error("source session meta", metaErr); }
           message.retry({ delaySeconds: 300 });
+        } else if (/timetable-group-mismatch|unstable-timetable-source/i.test(messageText)) {
+          message.retry({ delaySeconds: 10 });
         } else {
           message.retry({ delaySeconds: 90 });
         }
