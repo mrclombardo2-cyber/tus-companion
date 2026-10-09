@@ -212,6 +212,9 @@ jobs:
             -H "Content-Type: application/json" \
             --data "$(jq -nc --arg d "$smoke_department" --arg g "$smoke_group" '{department_id:$d,group_id:$g}')" >/dev/null
           smoke_encoded="$(jq -rn --arg v "$smoke_group" '$v|@uri')"
+          smoke_snapshot="$(curl --fail --silent --show-error "$base/api/timetable/$smoke_encoded")"
+          echo "Smoke snapshot header group: $(printf '%s\n' "$smoke_snapshot" | jq -r '.snapshot.student_group // ""')"
+          echo "Smoke snapshot first row groups: $(printf '%s\n' "$smoke_snapshot" | jq -c '.snapshot.events[0].student_groups // []')"
           smoke_ok=false
           for attempt in $(seq 1 36); do
             sync_json="$(curl --fail --silent --show-error "$base/api/sync-status/$smoke_encoded")"
