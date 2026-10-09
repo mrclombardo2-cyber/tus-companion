@@ -178,10 +178,7 @@ function canonicalGroup(value) {
 }
 
 function escapeRegExp(value) {
-  return String(value || "").replace(/[.*+?^$\{\}()|[\]\\]/g, "\\function canonicalGroup(value) {
-  return String(value || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
-}
-");
+  return String(value || "").replace(/[.*+?^$()|[\]\\{}]/g, (ch) => "\\" + ch);
 }
 
 function groupLabelMatches(actualValue, expectedValue) {
