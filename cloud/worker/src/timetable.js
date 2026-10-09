@@ -177,36 +177,64 @@ function canonicalGroup(value) {
   return String(value || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
 }
 
+function escapeRegExp(value) {
+  return String(value || "").replace(/[.*+?^$\{\}()|[\]\\]/g, "\\function canonicalGroup(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+");
+}
+
+function groupLabelMatches(actualValue, expectedValue) {
+  const actual = String(actualValue || "").trim().replace(/\s+/g, " ").toUpperCase();
+  const expected = String(expectedValue || "").trim().replace(/\s+/g, " ").toUpperCase();
+  if (!actual || !expected) return false;
+  if (canonicalGroup(actual) === canonicalGroup(expected)) return true;
+
+  const [code, ...suffixTokens] = expected.split(" ");
+  if (!code || !actual.startsWith(code)) return false;
+  if (!suffixTokens.length) return true;
+
+  const tail = actual.slice(code.length);
+  let cursor = 0;
+  for (const token of suffixTokens) {
+    const re = new RegExp(`(?:^|[^A-Z0-9])${escapeRegExp(token)}(?:[^A-Z0-9]|$)`);
+    const hit = re.exec(tail.slice(cursor));
+    if (!hit) return false;
+    cursor += hit.index + hit[0].length;
+  }
+  return true;
+}
+
 export function validateSnapshotForGroup(snapshot, expectedGroup) {
   if (!snapshot || typeof snapshot !== "object") throw new Error("invalid-timetable-snapshot");
   if (!Array.isArray(snapshot.events)) throw new Error("invalid-timetable-events");
   if (!Number.isFinite(Number(snapshot.week_number)) || !snapshot.week_start || !snapshot.week_end) {
     throw new Error("invalid-timetable-week");
   }
-  const actual = canonicalGroup(snapshot.student_group);
-  const expected = canonicalGroup(expectedGroup);
+  const expected = String(expectedGroup || "").trim();
   if (!expected) throw new Error("timetable-group-mismatch");
+  const header = String(snapshot.student_group || "").trim();
+  const headerKnown = Boolean(header && canonicalGroup(header) !== "UNKNOWN");
+  const headerMatches = headerKnown && groupLabelMatches(header, expected);
+  if (headerKnown && !headerMatches) throw new Error("timetable-group-mismatch");
+
   let groupEvidence = 0;
   let groupMatches = 0;
   for (const event of snapshot.events) {
     if (!event || !event.module || !event.start || !event.end || !event.date) throw new Error("invalid-timetable-event");
     if (event.date < snapshot.week_start || event.date > snapshot.week_end) throw new Error("timetable-event-outside-week");
-    const groups = Array.isArray(event.student_groups) ? event.student_groups.map(canonicalGroup).filter(Boolean) : [];
+    const groups = Array.isArray(event.student_groups) ? event.student_groups.filter(Boolean) : [];
     if (groups.length) {
       groupEvidence++;
-      if (groups.includes(expected)) groupMatches++;
+      if (groups.some((value) => groupLabelMatches(value, expected))) groupMatches++;
     }
   }
-  const headerMatches = Boolean(actual && actual !== "UNKNOWN" && actual === expected);
-  if (snapshot.events.length && groupEvidence && groupMatches !== groupEvidence && !headerMatches) {
+  if (!headerKnown && snapshot.events.length && groupEvidence && groupMatches !== groupEvidence) {
     throw new Error("timetable-group-mismatch");
   }
-  if (snapshot.events.length && !groupEvidence && !headerMatches) {
+  if (!headerKnown && snapshot.events.length && !groupEvidence) {
     throw new Error("timetable-group-mismatch");
   }
-  // A genuinely empty teaching week has no row-level group evidence. Keep it valid
-  // as long as the week metadata itself parsed correctly; change confirmation
-  // prevents an empty transient response from replacing a populated timetable.
   return snapshot;
 }
 
