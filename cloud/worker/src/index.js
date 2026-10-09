@@ -901,12 +901,22 @@ function snapshotScheduleShape(snapshot) {
 }
 
 async function fetchValidatedWeek(scientia, departmentId, groupId, week) {
-  const html = await scientia.fetchTimetable(departmentId, groupId, week);
-  const snapshot = parseTextSpreadsheet(html);
-  validateSnapshotForGroup(snapshot, groupId);
-  snapshot.group_id = groupId;
-  snapshot.department_id = departmentId;
-  return snapshot;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const html = await scientia.fetchTimetable(departmentId, groupId, week);
+    const snapshot = parseTextSpreadsheet(html);
+    try {
+      validateSnapshotForGroup(snapshot, groupId);
+      snapshot.group_id = groupId;
+      snapshot.department_id = departmentId;
+      return snapshot;
+    } catch (err) {
+      lastError = err;
+      if (!/timetable-group-mismatch/i.test(String(err?.message || err)) || attempt === 2) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+  throw lastError || new Error("invalid-timetable-snapshot");
 }
 
 async function confirmChangedSnapshot(scientia, departmentId, groupId, previous, first) {
