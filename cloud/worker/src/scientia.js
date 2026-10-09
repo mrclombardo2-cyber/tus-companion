@@ -21,6 +21,23 @@ function decodeEntities(value) {
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
 }
 
+
+function canonicalGroup(value) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]+/g, "");
+}
+
+export function timetableOutputGroup(html) {
+  const text = decodeEntities(String(html ?? "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+  const match = text.match(/Student Group:\s*(.*?)\s+Weeks selected for output:/i);
+  return match ? match[1].trim() : "";
+}
+
+function timetableMatchesGroup(html, expectedGroup) {
+  const actual = canonicalGroup(timetableOutputGroup(html));
+  const expected = canonicalGroup(expectedGroup);
+  return Boolean(actual && expected && actual === expected);
+}
+
 function attrs(tag) {
   const out = {};
   const re = /([:\w-]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
@@ -255,43 +272,51 @@ export class ScientiaSession {
   }
 
   async fetchTimetable(department, group, week = "t", days = "1-7", period = "1-28") {
-    let html = await this.ensureReady();
-    const dep = extractSelect(html, "dlFilter2");
-    const currentDep = dep?.options.find((x) => x.selected)?.value || "";
-    if (currentDep !== department) html = await this.postback(html, "dlFilter2", { dlFilter2: department });
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let html = await this.ensureReady();
+      const dep = extractSelect(html, "dlFilter2");
+      const currentDep = dep?.options.find((x) => x.selected)?.value || "";
+      if (currentDep !== department) html = await this.postback(html, "dlFilter2", { dlFilter2: department });
 
-    const groupSelect = extractSelect(html, "dlObject");
-    if (!groupSelect?.options.some((x) => x.value === group)) throw new Error("unknown-group-in-department");
+      const groupSelect = extractSelect(html, "dlObject");
+      if (!groupSelect?.options.some((x) => x.value === group)) throw new Error("unknown-group-in-department");
 
-    const weekSelect = extractSelect(html, "lbWeeks");
-    let weekValue = String(week);
-    const trimmedWeek = weekValue.trim();
-    if (/^\d+$/.test(trimmedWeek)) {
-      const option = weekSelect?.options.find((x) => String(x.value || "").trim() === trimmedWeek);
-      if (!option) throw new Error("unknown-week");
-      weekValue = option.value;
+      // Scientia keeps the selected student group in server-side session state.
+      // Force the group postback on every request so a previous timetable cannot
+      // bleed into the next group even when the department has not changed.
+      html = await this.postback(html, "dlObject", { dlFilter2: department, dlObject: group });
+
+      const weekSelect = extractSelect(html, "lbWeeks");
+      let weekValue = String(week);
+      const trimmedWeek = weekValue.trim();
+      if (/^\d+$/.test(trimmedWeek)) {
+        const option = weekSelect?.options.find((x) => String(x.value || "").trim() === trimmedWeek);
+        if (!option) throw new Error("unknown-week");
+        weekValue = option.value;
+      }
+
+      const currentWeek = weekSelect?.options.find((x) => x.selected)?.value || "";
+      if (currentWeek !== weekValue) html = await this.postback(html, "lbWeeks", { dlFilter2: department, dlObject: group, lbWeeks: weekValue });
+
+      const currentPeriod = extractSelect(html, "dlPeriod")?.options.find((x) => x.selected)?.value || "";
+      if (currentPeriod !== period) html = await this.postback(html, "dlPeriod", { dlFilter2: department, dlObject: group, lbWeeks: weekValue, lbDays: days, dlPeriod: period });
+
+      await this.post(html, {
+        __EVENTTARGET: "",
+        __EVENTARGUMENT: "",
+        dlFilter2: department,
+        dlObject: group,
+        lbWeeks: weekValue,
+        lbDays: days,
+        dlPeriod: period,
+        RadioType: TEXT_LAYOUT,
+        bGetTimetable: "View Timetable",
+      });
+      const timetable = await this.request(TUS_SHOW_URL);
+      if (!/Student Set TextSpreadsheet/i.test(timetable)) throw new Error("unexpected-timetable-layout");
+      if (timetableMatchesGroup(timetable, group)) return timetable;
     }
-
-    const currentWeek = weekSelect?.options.find((x) => x.selected)?.value || "";
-    if (currentWeek !== weekValue) html = await this.postback(html, "lbWeeks", { dlFilter2: department, dlObject: group, lbWeeks: weekValue });
-
-    const currentPeriod = extractSelect(html, "dlPeriod")?.options.find((x) => x.selected)?.value || "";
-    if (currentPeriod !== period) html = await this.postback(html, "dlPeriod", { dlFilter2: department, dlObject: group, lbWeeks: weekValue, lbDays: days, dlPeriod: period });
-
-    await this.post(html, {
-      __EVENTTARGET: "",
-      __EVENTARGUMENT: "",
-      dlFilter2: department,
-      dlObject: group,
-      lbWeeks: weekValue,
-      lbDays: days,
-      dlPeriod: period,
-      RadioType: TEXT_LAYOUT,
-      bGetTimetable: "View Timetable",
-    });
-    const timetable = await this.request(TUS_SHOW_URL);
-    if (!/Student Set TextSpreadsheet/i.test(timetable)) throw new Error("unexpected-timetable-layout");
-    return timetable;
+    throw new Error("timetable-group-mismatch");
   }
 
   async scrapeCatalog() {
