@@ -6,6 +6,62 @@ async function mockApi(page){const snap=snapshot();await page.route("**/api/**",
 async function selectStoredCourse(page){await page.addInitScript(value=>localStorage.setItem("tus-companion-course-v1",JSON.stringify(value)),selection)}
 test("desktop week keeps edge time labels visible and page width stable",async({page})=>{await page.setViewportSize({width:1600,height:900});await selectStoredCourse(page);await mockApi(page);await page.goto("/?tab=week");await expect(page.locator(".week-board")).toBeVisible();const first=page.locator(".week-time-label").first();await expect(first).toHaveText("09:00");const inside=await first.evaluate(el=>{const r=el.getBoundingClientRect(),p=document.querySelector(".week-scroll").getBoundingClientRect();return r.top>=p.top-1&&r.bottom<=p.bottom+1});expect(inside).toBeTruthy();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1)).toBeTruthy()});
 test("mobile week has no page overflow and uses phone-first view",async({page})=>{await page.setViewportSize({width:390,height:844});await selectStoredCourse(page);await mockApi(page);await page.goto("/?tab=week");await expect(page.locator(".mobile-week")).toBeVisible();await expect(page.locator(".week-desktop")).toBeHidden();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1)).toBeTruthy()});
+
+
+test("internal gaps appear as subtle breaks on Today and mobile Week",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await selectStoredCourse(page);
+  const snap=snapshot(),date=isoOffset(0),day=new Intl.DateTimeFormat("en-IE",{weekday:"long"}).format(new Date(`${date}T12:00:00`));
+  const make=(module,start,end,room)=>({day,date,activity:module,module,type:"Lecture",start,end,duration:"1:00",weeks_raw:"1-12",weeks:[1,2,3],room_raw:room,room_code:room,room_name:null,staff:"Lecturer",student_groups:["G1"]});
+  snap.events=[
+    make("Morning Lab","09:00","11:00","C74"),
+    make("Parallel Tutorial","10:00","12:00","C75"),
+    make("Afternoon Lecture","13:00","14:00","B11")
+  ];
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname,json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.11.4-cloud",frontend_version:"16.5.4",contact_email:""});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/");
+  await expect(page.locator(".today-break")).toHaveCount(1);
+  await expect(page.locator(".today-break")).toContainText("Break · 1h");
+  await page.getByRole("button",{name:"Week"}).click();
+  await expect(page.locator(".mobile-week-break")).toHaveCount(1);
+  await expect(page.locator(".mobile-week-break")).toContainText("Break · 1h");
+});
+
+test("desktop Week marks only real internal timetable gaps",async({page})=>{
+  await page.setViewportSize({width:1600,height:900});
+  await selectStoredCourse(page);
+  const snap=snapshot(),date=isoOffset(0),day=new Intl.DateTimeFormat("en-IE",{weekday:"long"}).format(new Date(`${date}T12:00:00`));
+  const make=(module,start,end,room)=>({day,date,activity:module,module,type:"Lecture",start,end,duration:"1:00",weeks_raw:"1-12",weeks:[1,2,3],room_raw:room,room_code:room,room_name:null,staff:"Lecturer",student_groups:["G1"]});
+  snap.events=[
+    make("Class A","09:00","10:00","C74"),
+    make("Class B","10:30","11:30","C75"),
+    make("Class C","13:00","14:00","B11")
+  ];
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname,json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.11.4-cloud",frontend_version:"16.5.4",contact_email:""});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=week");
+  const breaks=page.locator(".week-break");
+  await expect(breaks).toHaveCount(2);
+  await expect(breaks.nth(0)).toContainText("Break · 30 min");
+  await expect(breaks.nth(1)).toContainText("Break · 1h 30m");
+});
 test("course setup uses only department and course dropdowns",async({page})=>{await page.setViewportSize({width:390,height:844});await mockApi(page);await page.goto("/");await expect(page.locator("#course-search")).toHaveCount(0);await page.selectOption("#dep","dep1");const options=await page.locator("#grp option").allTextContents();expect(options.join(" ")).toContain("Industrial Production Engineering");expect(options.join(" ")).toContain("Business Law and Management")});
 test("saved timetable remains usable when API requests fail",async({page})=>{const snap=snapshot();await page.addInitScript(({selection,snap,catalog})=>{localStorage.setItem("tus-companion-course-v1",JSON.stringify(selection));localStorage.setItem("tus-companion-catalog-v1",JSON.stringify(catalog.departments));localStorage.setItem("tus-companion-offline-v1",JSON.stringify({group_id:"g1",saved_at:new Date().toISOString(),snapshot:snap,sync:{status:"ok"},changes:[]}))},{selection,snap,catalog});await page.route("**/api/**",route=>route.abort());await page.goto("/");await expect(page.locator(".offline-banner")).toBeVisible();await expect(page.getByText("IT & Computer Applications 2").first()).toBeVisible()});
 test("settings exposes a subscribable calendar feed",async({page})=>{await selectStoredCourse(page);await mockApi(page);await page.goto("/?tab=settings");await expect(page.getByText("Add to calendar")).toBeVisible();expect(await page.locator("#calendar-copy").getAttribute("data-calendar-url")).toContain("/api/calendar/g1.ics")});
