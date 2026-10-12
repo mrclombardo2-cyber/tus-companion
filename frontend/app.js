@@ -208,9 +208,35 @@ function render(){
 
 function renderToday(){
   const today=visibleEvents().filter(e=>e.date===isoToday()||e.day===dayName()),next=nextEvent();
-  return `${next?`<section class="hero ${isCurrentEvent(next)?'hero-live':''}"><p class="kicker gold">${isCurrentEvent(next)?`HAPPENING NOW${eventWeekday(next)?` (${eventWeekday(next)})`:''}`:`NEXT CLASS${nextClassContext(next)?` (${nextClassContext(next)})`:''}`}</p><h2>${esc(next.module)}</h2><div class="hero-meta"><span>${esc(formatRange(next))}</span><span>${esc(next.room_code||next.room_raw)}</span></div><p>${esc(next.room_name||next.staff)}</p>${next.room_code?`<button class="hero-button" data-map-room="${esc(next.room_code)}">Find room</button>`:''}</section>`:''}<section><div class="section-head"><h2>Today</h2><span>${today.length} classes</span></div>${today.length?today.map(e=>card(e)).join(''):'<div class="empty">No classes today.</div>'}</section>`;
+  return `${next?`<section class="hero ${isCurrentEvent(next)?'hero-live':''}"><p class="kicker gold">${isCurrentEvent(next)?`HAPPENING NOW${eventWeekday(next)?` (${eventWeekday(next)})`:''}`:`NEXT CLASS${nextClassContext(next)?` (${nextClassContext(next)})`:''}`}</p><h2>${esc(next.module)}</h2><div class="hero-meta"><span>${esc(formatRange(next))}</span><span>${esc(next.room_code||next.room_raw)}</span></div><p>${esc(next.room_name||next.staff)}</p>${next.room_code?`<button class="hero-button" data-map-room="${esc(next.room_code)}">Find room</button>`:''}</section>`:''}<section><div class="section-head"><h2>Today</h2><span>${today.length} classes</span></div>${today.length?renderDayTimeline(today,e=>card(e),'today-break'):'<div class="empty">No classes today.</div>'}</section>`;
 }
 function timeMinutes(value){const [h,m='0']=String(value||'0:0').split(':').map(Number);return (Number.isFinite(h)?h:0)*60+(Number.isFinite(m)?m:0)}
+function formatBreakDuration(minutes){
+  const total=Math.max(0,Math.round(Number(minutes)||0)),h=Math.floor(total/60),m=total%60;
+  if(h&&m)return `${h}h ${m}m`;
+  if(h)return `${h}h`;
+  return `${m} min`;
+}
+function dayTimelineItems(list){
+  const sorted=[...(list||[])].filter(e=>timeMinutes(e.end)>timeMinutes(e.start)).sort((a,b)=>timeMinutes(a.start)-timeMinutes(b.start)||timeMinutes(a.end)-timeMinutes(b.end));
+  if(!sorted.length)return [];
+  const out=[];let busyEnd=-1;
+  for(const e of sorted){
+    const start=timeMinutes(e.start),end=timeMinutes(e.end);
+    if(busyEnd>=0&&start>busyEnd)out.push({kind:'break',start:busyEnd,end:start,duration:start-busyEnd});
+    out.push({kind:'event',event:e});
+    busyEnd=Math.max(busyEnd,end);
+  }
+  return out;
+}
+function breakMarker(gap,className='timeline-break'){
+  const label=`Break · ${formatBreakDuration(gap.duration)}`;
+  const start=`${String(Math.floor(gap.start/60)).padStart(2,'0')}:${String(gap.start%60).padStart(2,'0')}`,end=`${String(Math.floor(gap.end/60)).padStart(2,'0')}:${String(gap.end%60).padStart(2,'0')}`;
+  return `<div class="${className}" role="note" aria-label="${esc(label)} from ${esc(formatTime(start))} to ${esc(formatTime(end))}"><span>${esc(label)}</span></div>`;
+}
+function renderDayTimeline(list,eventRenderer,breakClass='timeline-break'){
+  return dayTimelineItems(list).map(item=>item.kind==='break'?breakMarker(item,breakClass):eventRenderer(item.event)).join('');
+}
 function weekBounds(events){
   if(!events.length)return {start:9*60,end:18*60};
   let start=Math.min(...events.map(e=>timeMinutes(e.start))),end=Math.max(...events.map(e=>timeMinutes(e.end)));
@@ -290,7 +316,8 @@ function mobileDayPanel(weeks,selected){
   const selectedMeta=days.find(x=>x.date===selected)||{date:selected,day:longDayIso(selected),weekStart:weekForDate(weeks,selected)?.week_start||null};
   const selectedWeek=weekForDate(weeks,selected)||weeks[0];
   const list=(selectedWeek?.events||[]).filter(e=>e.date===selected).sort((a,b)=>a.start.localeCompare(b.start));
-  const classes=list.length?list.map(e=>{const live=isCurrentEvent(e),room=e.room_code||e.room_raw||'Room TBC';const inner=`<span class="mobile-week-time"><b>${esc(formatTime(e.start))}</b><span>${esc(formatTime(e.end))}</span></span><span class="mobile-week-info"><strong>${esc(e.module)}</strong><span class="mobile-week-meta"><b>${esc(room)}</b>${e.type?`<span>${esc(e.type)}</span>`:''}</span>${e.staff?`<small>${esc(e.staff)}</small>`:''}</span><span class="mobile-week-side">${live?'<em>NOW</em>':''}${e.room_code?'<span aria-hidden="true">›</span>':''}</span>`;return e.room_code?`<button class="mobile-week-card ${live?'current':''}" style="${subjectStyle(e.module)}" data-map-room="${esc(e.room_code)}" aria-label="${esc(e.module)}, ${esc(formatRange(e))}, ${esc(room)}. Open campus map.">${inner}</button>`:`<div class="mobile-week-card no-route ${live?'current':''}" style="${subjectStyle(e.module)}">${inner}</div>`}).join(''):`<div class="mobile-week-empty">No classes on ${esc(longDayIso(selected)||'this day')}.</div>`;
+  const renderMobileClass=e=>{const live=isCurrentEvent(e),room=e.room_code||e.room_raw||'Room TBC';const inner=`<span class="mobile-week-time"><b>${esc(formatTime(e.start))}</b><span>${esc(formatTime(e.end))}</span></span><span class="mobile-week-info"><strong>${esc(e.module)}</strong><span class="mobile-week-meta"><b>${esc(room)}</b>${e.type?`<span>${esc(e.type)}</span>`:''}</span>${e.staff?`<small>${esc(e.staff)}</small>`:''}</span><span class="mobile-week-side">${live?'<em>NOW</em>':''}${e.room_code?'<span aria-hidden="true">›</span>':''}</span>`;return e.room_code?`<button class="mobile-week-card ${live?'current':''}" style="${subjectStyle(e.module)}" data-map-room="${esc(e.room_code)}" aria-label="${esc(e.module)}, ${esc(formatRange(e))}, ${esc(room)}. Open campus map.">${inner}</button>`:`<div class="mobile-week-card no-route ${live?'current':''}" style="${subjectStyle(e.module)}">${inner}</div>`};
+  const classes=list.length?renderDayTimeline(list,renderMobileClass,'mobile-week-break'):`<div class="mobile-week-empty">No classes on ${esc(longDayIso(selected)||'this day')}.</div>`;
   const count=list.length,context=selected===today?'TODAY':selected===tomorrow?'TOMORROW':String(selectedMeta?.day||longDayIso(selected)||'').toUpperCase();
   const heading=`<div><p>${esc(context)}</p><h2>${esc(selectedMeta?.day||longDayIso(selected))}${selected?` · ${esc(shortDateIso(selected))}`:''}</h2></div><span>${count} ${count===1?'class':'classes'}</span>`;
   return {heading,classes,weekStart:selectedMeta?.weekStart||selectedWeek?.week_start||null};
@@ -344,7 +371,7 @@ function renderWeek(){
   const hours=[];for(let m=start;m<=end;m+=60)hours.push(m);
   const header=displayDates.map((x,i)=>{const isToday=x.date===isoToday();return `<div class="week-day-head ${isToday?'is-today':''}" style="grid-column:${i+2}"><b>${esc((x.day||'').slice(0,3))}</b><span>${esc(shortDateIso(x.date))}</span>${isToday?'<small>TODAY</small>':''}</div>`}).join('');
   const times=hours.map(m=>`<span class="week-time-label" style="top:${((m-start)/60)*pxPerHour}px">${esc(formatTime(`${Math.floor(m/60)}:00`))}</span>`).join('');
-  const dayCols=displayDates.map((x,dayIndex)=>{const list=events.filter(e=>e.date===x.date),isToday=x.date===isoToday();const blocks=overlapLayout(list).map(({e,lane,lanes})=>{const duration=Math.max(0,timeMinutes(e.end)-timeMinutes(e.start)),top=((timeMinutes(e.start)-start)/60)*pxPerHour,height=Math.max(54,(duration/60)*pxPerHour-4),left=(lane/lanes)*100,width=100/lanes;const current=isCurrentEvent(e),titleLength=String(e.module||'').trim().length,titleClass=titleLength>44?'title-very-long':titleLength>28?'title-long':'',densityClass=duration<=60?'compact':'',laneClass=lanes>1?'lanes-narrow':'';return `<button class="week-event ${current?'current':''} ${titleClass} ${densityClass} ${laneClass}" style="${subjectStyle(e.module)};top:${top}px;height:${height}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px)" ${e.room_code?`data-map-room="${esc(e.room_code)}"`:''} title="${esc(e.module)} · ${esc(formatRange(e))}"><span class="week-event-time">${esc(formatTime(e.start))}</span><strong>${esc(e.module)}</strong><span class="week-event-room">${esc(e.room_code||e.room_raw||'')}</span>${current?'<em>NOW</em>':''}</button>`}).join('');return `<div class="week-day-col ${isToday?'is-today':''}" style="grid-column:${dayIndex+2};height:${totalHeight}px">${blocks}</div>`}).join('');
+  const dayCols=displayDates.map((x,dayIndex)=>{const list=events.filter(e=>e.date===x.date),isToday=x.date===isoToday();const breaks=dayTimelineItems(list).filter(item=>item.kind==='break').map(gap=>{const top=((gap.start-start)/60)*pxPerHour,height=Math.max(1,(gap.duration/60)*pxPerHour),label=`Break · ${formatBreakDuration(gap.duration)}`,showLabel=height>=18;return `<div class="week-break ${showLabel?'':'micro'}" style="top:${top}px;height:${height}px" title="${esc(label)}" aria-label="${esc(label)}">${showLabel?`<span>${esc(label)}</span>`:''}</div>`}).join('');const blocks=overlapLayout(list).map(({e,lane,lanes})=>{const duration=Math.max(0,timeMinutes(e.end)-timeMinutes(e.start)),top=((timeMinutes(e.start)-start)/60)*pxPerHour,height=Math.max(54,(duration/60)*pxPerHour-4),left=(lane/lanes)*100,width=100/lanes;const current=isCurrentEvent(e),titleLength=String(e.module||'').trim().length,titleClass=titleLength>44?'title-very-long':titleLength>28?'title-long':'',densityClass=duration<=60?'compact':'',laneClass=lanes>1?'lanes-narrow':'';return `<button class="week-event ${current?'current':''} ${titleClass} ${densityClass} ${laneClass}" style="${subjectStyle(e.module)};top:${top}px;height:${height}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px)" ${e.room_code?`data-map-room="${esc(e.room_code)}"`:''} title="${esc(e.module)} · ${esc(formatRange(e))}"><span class="week-event-time">${esc(formatTime(e.start))}</span><strong>${esc(e.module)}</strong><span class="week-event-room">${esc(e.room_code||e.room_raw||'')}</span>${current?'<em>NOW</em>':''}</button>`}).join('');return `<div class="week-day-col ${isToday?'is-today':''}" style="grid-column:${dayIndex+2};height:${totalHeight}px">${breaks}${blocks}</div>`}).join('');
   const selectableWeeks=weeks.filter(w=>w.week_start===currentWeek?.week_start||(w.events||[]).some(e=>e.date>=isoToday()&&e.date<=horizonEnd()));
   const weekPicker=selectableWeeks.map(w=>`<button class="desktop-week-chip ${w.week_start===selectedWeek.week_start?'selected':''}" data-week-select="${esc(w.week_start||'')}">${esc(weekChipLabel(w,currentWeek))}</button>`).join('');
   const columnCount=Math.max(1,displayDates.length),boardStyle=`grid-template-columns:72px repeat(${columnCount},minmax(230px,1fr));min-width:${Math.max(760,72+columnCount*230)}px`;
