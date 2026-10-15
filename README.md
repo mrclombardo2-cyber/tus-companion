@@ -72,6 +72,14 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 Non committare token, cookie, chiavi private, `.cloud.local.json`, file di sessione o `.dev.vars`.
 
+## Ripristino TUS quando hai soltanto GitHub
+
+Su un PC Windows, scarica e avvia [RECOVER-TUS-PORTABLE.cmd](https://github.com/mrclombardo2-cyber/tus-companion/raw/refs/heads/main/RECOVER-TUS-PORTABLE.cmd). Non occorrono una cartella locale preesistente, `.cloud.local.json` o conoscere le credenziali Cloudflare.
+
+Il file scarica automaticamente la versione aggiornata del progetto, installa GitHub CLI/Python/Chromium quando necessario, e riutilizza il login locale TUS finché è valido. Al primo utilizzo richiede di autorizzare GitHub nel browser; quando Microsoft richiede login o MFA bisogna completare quella schermata ufficiale. Il programma verifica la sessione e carica lo stato del browser come **GitHub Actions Secret cifrato**, avvia il workflow `recover-tus-from-browser.yml` che lo cifra per Cloudflare e controlla una nuova sincronizzazione del catalogo. Al termine elimina il secret temporaneo da GitHub. Se il programma viene terminato prima, eliminare `TUS_RECOVERY_STATE_B64` da **Settings → Secrets and variables → Actions**.
+
+**Non** incollare password o sessioni nei workflow input, commit, issue, messaggi, log o link. Se la password universitaria è stata condivisa in chat, va cambiata. Nessun sistema può aggirare una richiesta Microsoft di verifica interattiva. L'app, il cron Cloudflare e il controllo dello stato continuano a funzionare da remoto quando il PC è spento, nei limiti delle sessioni rilasciate dal fornitore.
+
 ## Freshness e monitoraggio automatico (v16.6.2)
 
 - L'ultima ora visualizzata come `Updated` è l'**ultima sincronizzazione riuscita**, non l'ora corrente.

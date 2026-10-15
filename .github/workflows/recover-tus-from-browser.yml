@@ -1,0 +1,64 @@
+name: Recover TUS source from local browser
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tus-browser-session-restoration
+  cancel-in-progress: false
+
+jobs:
+  restore-session:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUD_API_URL: https://tus-companion.tusathlone.workers.dev
+      CLOUD_ADMIN_TOKEN: ${{ secrets.CLOUD_ADMIN_TOKEN }}
+      SESSION_CIPHER_KEY_B64: ${{ secrets.SESSION_CIPHER_KEY_B64 }}
+      TUS_RECOVERY_STATE_B64: ${{ secrets.TUS_RECOVERY_STATE_B64 }}
+
+    steps:
+      - name: Verify secure reconnect inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLOUD_ADMIN_TOKEN SESSION_CIPHER_KEY_B64 TUS_RECOVERY_STATE_B64; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing $name. Run the Windows recovery launcher or repair the server secrets."
+              exit 1
+            fi
+          done
+
+      - name: Checkout trusted recovery code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install secure upload dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --no-input \
+            cryptography==44.0.0 httpx==0.28.1 pydantic==2.10.4 \
+            beautifulsoup4==4.14.3 playwright==1.49.1 pywebpush==2.0.3
+
+      - name: Restore encrypted session and verify fresh catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          python cloud/collector/recover_from_actions_secret.py
+
+      - name: Confirm live recovery health
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 "$CLOUD_API_URL/health" \
+            | jq '{status,collector:{catalog_updated_at:.collector.catalog_updated_at,source_session_error:.collector.source_session_error,source_browser_manual_required_at:.collector.source_browser_manual_required_at,active_groups:.collector.active_groups,delayed_groups:.collector.delayed_groups}}'
