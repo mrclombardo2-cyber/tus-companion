@@ -45,7 +45,10 @@ test("scheduler keeps recently viewed groups ahead of stale background interests
 
 test("source-session expiry triggers immediate bounded recovery", () => {
   const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
-  assert.match(source, /const SOURCE_BROWSER_RECOVERY_MINUTES = 1;/);
+  assert.match(source, /const SOURCE_BROWSER_RECOVERY_MINUTES = 5;/);
+  assert.match(source, /const SOURCE_MANUAL_RETRY_HOURS = 6;/);
+  assert.match(source, /browserManualLoginDetected/);
+  assert.match(source, /source_browser_manual_required_at", ""/);
   assert.match(source, /recovery = await maybeRecoverSourceSession\(env\)/);
   assert.match(source, /delaySeconds: recovery\.recovered \? 5 : 60/);
 });
