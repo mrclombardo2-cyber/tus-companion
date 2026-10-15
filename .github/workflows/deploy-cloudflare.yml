@@ -1,4 +1,4 @@
-name: Deploy Cloudflare Worker v16.6.0
+name: Deploy Cloudflare Worker v16.6.1
 
 on:
   workflow_dispatch:
@@ -177,7 +177,7 @@ jobs:
             live_app="$(printf '%s\n' "$meta" | jq -r '.frontend_version // ""' 2>/dev/null || true)"
             live_worker="$(printf '%s\n' "$meta" | jq -r '.version // ""' 2>/dev/null || true)"
             departments="$(printf '%s\n' "$catalog" | jq -r '.departments | length' 2>/dev/null || echo 0)"
-            if [ "$live_worker" = "1.12.0-cloud" ] && [ "$live_app" = "16.6.0" ] && [ "${departments:-0}" -gt 0 ] 2>/dev/null; then
+            if [ "$live_worker" = "1.12.0-cloud" ] && [ "$live_app" = "16.6.1" ] && [ "${departments:-0}" -gt 0 ] 2>/dev/null; then
               public_ok=true
               break
             fi
