@@ -19,6 +19,7 @@ const REMINDER_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_WINDOW_MINUTES = 3;
 const SOURCE_BROWSER_RECOVERY_MINUTES = 1;
 const SOURCE_BROWSER_RECOVERY_TIMEOUT_MS = 45_000;
+const SOURCE_HTTP_KEEPALIVE_MINUTES = 8;
 const NEXT_WEEK_REFRESH_MINUTES = 10;
 const MAP_URL = "https://app.mappedin.com/map/68b1b5dd74254a000bbf174b";
 const SESSION_AAD = new TextEncoder().encode("tus-companion-source-session-v1");
@@ -132,7 +133,7 @@ async function setMetaValue(env, key, value) {
 }
 
 async function health(env) {
-  const [lastCycle, lastCycleErrors, catalogAt, sourceError, browserAttempt, browserSuccess, browserError, manualRequired, groups] = await Promise.all([
+  const [lastCycle, lastCycleErrors, catalogAt, sourceError, browserAttempt, browserSuccess, browserError, manualRequired, keepaliveAttempt, keepaliveSuccess, keepaliveError, groups] = await Promise.all([
     getMetaValue(env, "last_cycle_finished_at"),
     getMetaValue(env, "last_cycle_errors"),
     getMetaValue(env, "catalog_updated_at"),
@@ -141,6 +142,9 @@ async function health(env) {
     getMetaValue(env, "source_browser_last_success_at"),
     getMetaValue(env, "source_browser_last_error"),
     getMetaValue(env, "source_browser_manual_required_at"),
+    getMetaValue(env, "source_keepalive_last_attempt_at"),
+    getMetaValue(env, "source_keepalive_last_success_at"),
+    getMetaValue(env, "source_keepalive_last_error"),
     activeGroups(env),
   ]);
   const delayedGroups=groups.filter((g)=>!g.last_success_at||ageMs(g.last_success_at)>10*60_000);
@@ -160,6 +164,10 @@ async function health(env) {
       source_browser_last_success_at: browserSuccess || null,
       source_browser_last_error: browserError || null,
       source_browser_manual_required_at: manualRequired || null,
+      source_keepalive_minutes: SOURCE_HTTP_KEEPALIVE_MINUTES,
+      source_keepalive_last_attempt_at: keepaliveAttempt || null,
+      source_keepalive_last_success_at: keepaliveSuccess || null,
+      source_keepalive_last_error: keepaliveError || null,
       active_groups: groups.length,
       delayed_groups: delayedGroups.length,
       oldest_active_success_at: groups.map((g)=>g.last_success_at).filter(Boolean).sort()[0]||null,
@@ -684,6 +692,38 @@ async function recoverSourceSessionWithBrowser(env) {
   }
 }
 
+async function keepSourceSessionWarm(env) {
+  const manualRequired = await getMetaValue(env, "source_browser_manual_required_at");
+  if (manualRequired) return { attempted: false, ok: false, manual_required: true };
+
+  const lastSuccess = await getMetaValue(env, "source_keepalive_last_success_at");
+  if (lastSuccess && ageMs(lastSuccess) < SOURCE_HTTP_KEEPALIVE_MINUTES * 60_000) {
+    return { attempted: false, ok: true };
+  }
+
+  await setMetaValue(env, "source_keepalive_last_attempt_at", nowIso());
+  try {
+    const storage = await loadSourceStorageState(env);
+    const session = new ScientiaSession(storage);
+    await session.ensureReady();
+    await saveSourceStorageState(env, session.storageState());
+    await setMetaValue(env, "source_keepalive_last_success_at", nowIso());
+    await setMetaValue(env, "source_keepalive_last_error", "");
+    await setMetaValue(env, "source_session_error", "");
+    await setMetaValue(env, "source_session_last_retry_at", "");
+    return { attempted: true, ok: true };
+  } catch (err) {
+    const message = String(err?.message || err);
+    await setMetaValue(env, "source_keepalive_last_error", message);
+    if (/source-session-expired/i.test(message)) {
+      await setMetaValue(env, "source_session_error", "source-session-expired");
+      const recovery = await maybeRecoverSourceSession(env);
+      return { attempted: true, ok: Boolean(recovery.recovered), recovery, error: message };
+    }
+    return { attempted: true, ok: false, error: message };
+  }
+}
+
 async function maybeRecoverSourceSession(env) {
   const sourceError = await getMetaValue(env, "source_session_error");
   if (sourceError !== "source-session-expired") return { attempted: false, recovered: !sourceError };
@@ -1038,6 +1078,7 @@ async function enqueueScheduledWork(env) {
   const started = nowIso();
   let groupsQueued = 0, errors = 0;
   try {
+    await keepSourceSessionWarm(env);
     let sourceError = await getMetaValue(env, "source_session_error");
     if (sourceError) {
       const recovery = await maybeRecoverSourceSession(env);
