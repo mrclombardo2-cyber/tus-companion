@@ -1,0 +1,70 @@
+name: Monitor TUS timetable freshness
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: tus-timetable-health-monitor
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HEALTH_URL: https://tus-companion.tusathlone.workers.dev/health
+      ISSUE_TITLE: 'TUS Companion: timetable synchronization needs attention'
+    steps:
+      - name: Check scheduler, upstream session and freshness
+        shell: bash
+        run: |
+          set -euo pipefail
+          health="$(curl --fail --silent --show-error --retry 2 --max-time 20 "$HEALTH_URL" || true)"
+          reason=""
+          if ! printf '%s' "$health" | jq -e '.collector | type=="object"' >/dev/null 2>&1; then
+            reason='The public health endpoint is unreachable or invalid.'
+          else
+            source_error="$(printf '%s' "$health" | jq -r '.collector.source_session_error // ""')"
+            manual="$(printf '%s' "$health" | jq -r '.collector.source_browser_manual_required_at // ""')"
+            delayed="$(printf '%s' "$health" | jq -r '.collector.delayed_groups // 0')"
+            active="$(printf '%s' "$health" | jq -r '.collector.active_groups // 0')"
+            last_cycle="$(printf '%s' "$health" | jq -r '.collector.last_cycle_finished_at // ""')"
+            last_epoch="$(date -u -d "$last_cycle" +%s 2>/dev/null || echo 0)"
+            now_epoch="$(date -u +%s)"
+            if [ -n "$manual" ]; then
+              reason='TUS/Microsoft requires interactive sign-in or MFA; run RECOVER-TUS-NOW.cmd on the authorized PC.'
+            elif [ -n "$source_error" ]; then
+              reason="Upstream TUS session failure: $source_error"
+            elif [ "$last_epoch" -eq 0 ] || [ $((now_epoch-last_epoch)) -gt 900 ]; then
+              reason='The Cloudflare timetable scheduler has not completed a cycle in over 15 minutes.'
+            elif [ "$active" -gt 0 ] && [ "$delayed" -gt 0 ]; then
+              reason="$delayed of $active active timetable groups have not synchronized in over 10 minutes."
+            fi
+          fi
+
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state all --limit 100 --json number,title,state | jq -c --arg title "$ISSUE_TITLE" '[.[] | select(.title==$title)] | first // empty')"
+          number="$(printf '%s' "$existing" | jq -r '.number // empty' 2>/dev/null || true)"
+          issue_state="$(printf '%s' "$existing" | jq -r '.state // empty' 2>/dev/null || true)"
+
+          if [ -n "$reason" ]; then
+            echo "::error::$reason"
+            issue_body="Timetable refresh requires investigation.\n\n**Observed problem:** $reason\n\n**Health endpoint:** $HEALTH_URL\n\n**Recovery:** First check Cloudflare scheduled/queue workers. If TUS/Microsoft needs MFA, run RECOVER-TUS-NOW.cmd on an authorized Windows PC, then verify that /health shows new catalogue and group sync timestamps. This is not resolved by clearing the browser cache.\n\nThis issue is managed automatically by the scheduled health monitor."
+            if [ -z "$number" ]; then
+              printf '%b\n' "$issue_body" | gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body-file -
+            elif [ "$issue_state" = 'CLOSED' ]; then
+              gh issue reopen "$number" --repo "$GITHUB_REPOSITORY"
+              printf '%b\n' "$issue_body" | gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file -
+            fi
+            exit 1
+          fi
+          if [ -n "$number" ] && [ "$issue_state" = 'OPEN' ]; then
+            gh issue close "$number" --repo "$GITHUB_REPOSITORY" --reason completed --comment 'The scheduled health check confirms that the scheduler is running, the source session is available, and all active groups are fresh.'
+          fi
+          echo 'Scheduler healthy; source session valid; active timetables fresh.'
