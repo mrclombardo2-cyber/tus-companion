@@ -12,7 +12,10 @@ function Step([string]$Text) {
 }
 
 if (-not (Test-Path $Python)) {
-    throw "Python environment not found. Run .\setup.ps1 first."
+    Step "Prepare the local recovery environment"
+    Write-Host "Python environment not found. Running the existing setup automatically..." -ForegroundColor Yellow
+    & (Join-Path $Root "setup.ps1")
+    if (-not (Test-Path $Python)) { throw "Local Python setup did not complete." }
 }
 if (-not (Test-Path $CloudConfigPath)) {
     throw ".cloud.local.json not found. Run .\GO-LIVE.ps1 once on this project first."
@@ -68,4 +71,6 @@ Write-Host "`n============================================================" -For
 Write-Host " TUS SESSION RECONNECTED AND VERIFIED" -ForegroundColor Green
 Write-Host "============================================================" -ForegroundColor Green
 Write-Host "Cloudflare has accepted the new encrypted session and a fresh catalogue sync was confirmed." -ForegroundColor White
-Write-Host "Students do not need to sign in or do anything." -ForegroundColor Green
+Write-Host "The Cloudflare cron now keeps the source session warm independently of GitHub Actions." -ForegroundColor White
+Write-Host "Active student timetables will refresh automatically from the cloud." -ForegroundColor White
+Write-Host "Students do not need to sign in, reinstall the PWA, or change course." -ForegroundColor Green
