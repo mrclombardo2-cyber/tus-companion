@@ -10,7 +10,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.6.0';
+const CLIENT_VERSION='16.6.1';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -22,6 +22,7 @@ const API_TIMEOUT_MS=9000;
 const RECOVERY_DELAYS_MS=[1500,4000,10000,30000];
 const PRIORITY_WATCH_AGE_MS=3*60*1000;
 const PRIORITY_WATCH_INTERVAL_MS=15*1000;
+const SYNC_STALE_AFTER_MS=6*60*1000;
 const CHANGES_RESET_AT='2026-09-30T11:58:00.000Z';
 
 const SUBJECT_PALETTE=[
@@ -164,10 +165,16 @@ function syncNeedsPriorityWatch(){
   if(['error','never-synced'].includes(status))return true;
   return syncAgeMs()>PRIORITY_WATCH_AGE_MS;
 }
+function staleSyncReason(){
+  if(state.offline||!state.snapshot)return '';
+  if(state.sync?.status==='error')return state.sync?.error==='source-session-unavailable'?'source':'error';
+  return syncAgeMs()>SYNC_STALE_AFTER_MS?'delayed':'';
+}
 function syncDisplay(){
   if(state.offline){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Offline${saved?` · saved ${saved}`:''}`}}
   if(state.usingCached){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Reconnecting${saved?` · saved ${saved}`:''}`}}
   const last=state.sync?.last_success_at,status=state.sync?.status;
+  if(staleSyncReason())return {updated:last?`Not updated · ${formatClockDate(last)}`:'Not updated'};
   if(last)return {updated:`Updated ${formatClockDate(last)}`};
   return {updated:status==='syncing'||status==='queued'||status==='error'?'Updating…':''};
 }
@@ -201,8 +208,14 @@ function render(){
   const title=state.tab==='today'?'Today':state.tab==='week'?weekPageTitle():state.tab==='changes'?'Changes':'Settings';
   let body=state.tab==='today'?renderToday():state.tab==='week'?renderWeek():state.tab==='changes'?renderChanges():renderSettings();
   const syncUi=syncDisplay();
+  const staleReason=staleSyncReason();
+  const lastSuccessful=state.sync?.last_success_at;
+  const sourceInfo=lastSuccessful?'Last successful sync '+formatDetected(lastSuccessful)+'. ':'No successful sync has been recorded. ';
+  const staleTitle=staleReason==='source'?'Timetable source unavailable':'Timetable update delayed';
+  const staleBanner=staleReason?'<div class="offline-banner stale-banner" role="alert"><div class="offline-copy"><b>'+esc(staleTitle)+'</b><span>'+esc(sourceInfo)+'The timetable may be outdated. Verify important changes in the official TUS timetable.</span></div><button id="retry-sync" class="small-ghost" type="button">Retry now</button></div>':'';
   const cacheBanner=(state.offline||state.usingCached)?`<div class="offline-banner" role="status"><div class="offline-copy"><b>${state.offline?'Offline mode':'Reconnecting'}</b><span>${state.offlineSavedAt?`Showing data saved ${esc(formatDetected(state.offlineSavedAt))}.`:'Showing the last timetable saved on this device.'} ${state.offline?'Changes will refresh automatically when the connection returns.':'Automatic retries are running now.'}</span></div>${state.offline?'':'<button id="retry-sync" class="small-ghost" type="button">Retry now</button>'}</div>`:'';
-  APP.innerHTML=`<main class="app ${state.tab==='week'?'week-app':''}"><header><div><p class="kicker">TUS ATHLONE</p><h1>${title}</h1></div><div class="header-status">${esc(syncUi.updated)}</div></header>${cacheBanner}${body}${nav()}</main>${renderOverlays()}${state.toast?`<div class="toast" role="status">${esc(state.toast)}</div>`:''}`;
+  const freshnessBanner=cacheBanner||staleBanner;
+  APP.innerHTML=`<main class="app ${state.tab==='week'?'week-app':''}"><header><div><p class="kicker">TUS ATHLONE</p><h1>${title}</h1></div><div class="header-status ${staleReason?'error':''}">${esc(syncUi.updated)}</div></header>${freshnessBanner}${body}${nav()}</main>${renderOverlays()}${state.toast?`<div class="toast" role="status">${esc(state.toast)}</div>`:''}`;
   bindCommon();
 }
 

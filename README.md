@@ -72,6 +72,14 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 Non committare token, cookie, chiavi private, `.cloud.local.json`, file di sessione o `.dev.vars`.
 
+## Freshness e monitoraggio automatico (v16.6.1)
+
+- L'ultima ora visualizzata come `Updated` è l'**ultima sincronizzazione riuscita**, non l'ora corrente.
+- Se il dato risale a più di **6 minuti** o la sorgente segnala un errore, la PWA visualizza `Not updated` e un avviso persistente: il vecchio orario resta consultabile ma non è presentato come aggiornato.
+- La pipeline `.github/workflows/tus-health-monitor.yml` verifica ogni **15 minuti circa** il cron Cloudflare, la sessione TUS e i gruppi attivi. In caso di anomalia persistente apre/riapre una issue GitHub e la chiude solo a recupero avvenuto.
+- La disponibilità delle esecuzioni pianificate GitHub non è un SLA: il cron Cloudflare è il principale meccanismo di sincronizzazione.
+- Quando TUS/Microsoft richiede accesso interattivo o MFA, non è possibile automatizzare il superamento del controllo: su un PC Windows autorizzato avviare `RECOVER-TUS-NOW.cmd`, completare il normale login e verificare `/health` e l'ora di ultima sincronizzazione. Non cancellare i dati locali come rimedio alla scadenza della sessione sorgente.
+
 ## Stato legale
 
 TUS Companion è indipendente e non ufficiale, non affiliato, approvato, sponsorizzato o autorizzato da TUS. Il sistema ufficiale TUS resta la fonte autorevole.

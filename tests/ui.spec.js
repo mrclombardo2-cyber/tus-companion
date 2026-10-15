@@ -21,7 +21,7 @@ test("internal gaps appear as subtle breaks on Today and mobile Week",async({pag
   await page.route("**/api/**",async route=>{
     const path=new URL(route.request().url()).pathname,json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.0",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.1",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/changes/g1")return json([]);
@@ -49,7 +49,7 @@ test("desktop Week marks only real internal timetable gaps",async({page})=>{
   await page.route("**/api/**",async route=>{
     const path=new URL(route.request().url()).pathname,json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.0",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.1",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/changes/g1")return json([]);
@@ -112,7 +112,7 @@ test("mobile keeps pinch zoom available and avoids iOS form-focus zoom",async({p
 test("service worker updates cannot strand an old frontend",async({page})=>{
   await mockApi(page);
   await page.goto("/");
-  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.6.0",{cache:"no-store"}).then(r=>r.text()));
+  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.6.1",{cache:"no-store"}).then(r=>r.text()));
   expect(source).toContain("navigator.serviceWorker.addEventListener('controllerchange'");
   expect(source).toContain("window.location.reload()");
   expect(source).toContain("swControllerSeen");
@@ -228,9 +228,9 @@ test("Week cards keep long course names fully visible",async({page})=>{
 test("installed PWA actively upgrades to the newest client shell",async({page})=>{
   await mockApi(page);
   await page.goto("/");
-  const appSource=await page.evaluate(async()=>await fetch("/app.js?v=16.6.0",{cache:"no-store"}).then(r=>r.text()));
-  const swSource=await page.evaluate(async()=>await fetch("/sw.js?v=16.6.0",{cache:"no-store"}).then(r=>r.text()));
-  expect(appSource).toContain("const CLIENT_VERSION='16.6.0'");
+  const appSource=await page.evaluate(async()=>await fetch("/app.js?v=16.6.1",{cache:"no-store"}).then(r=>r.text()));
+  const swSource=await page.evaluate(async()=>await fetch("/sw.js?v=16.6.1",{cache:"no-store"}).then(r=>r.text()));
+  expect(appSource).toContain("const CLIENT_VERSION='16.6.1'");
   expect(appSource).toContain("register('/sw.js?v='+encodeURIComponent(CLIENT_VERSION)");
   expect(appSource).toContain("ensureLatestClient");
   expect(appSource).toContain("visibilitychange");
@@ -238,7 +238,7 @@ test("installed PWA actively upgrades to the newest client shell",async({page})=
   expect(swSource).toContain("includeUncontrolled:true");
   expect(swSource).toContain("navigationPreload");
   expect(swSource).toContain("cache:'no-store'");
-  expect(swSource).toContain("tus-companion-v16.6.0");
+  expect(swSource).toContain("tus-companion-v16.6.1");
 });
 
 test("first open of a stale course waits for fresh data before showing the timetable",async({page})=>{
@@ -254,7 +254,7 @@ test("first open of a stale course waits for fresh data before showing the timet
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.0",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.1",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:new Date(Date.now()-6*60*60*1000).toISOString()}});
     if(path==="/api/timetable/g1"){
       timetableCalls++;
@@ -296,7 +296,7 @@ test("returning user sees cached timetable immediately and refreshes in backgrou
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.0",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.1",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:staleSync.last_success_at}});
     if(path==="/api/timetable/g1"){
       calls++;
@@ -313,4 +313,48 @@ test("returning user sees cached timetable immediately and refreshes in backgrou
   await expect(page.locator("body")).toContainText("OLD INSTALLED SNAPSHOT");
   await page.waitForTimeout(1000);
   expect(calls).toBeGreaterThanOrEqual(1);
+});
+
+
+test('stale cloud data and a source outage are never labelled Updated',async({page})=>{
+  const snap=snapshot();
+  const staleAt=new Date(Date.now()-9*60*60*1000).toISOString();
+  const sync={group_id:'g1',status:'error',error:'source-session-unavailable',last_success_at:staleAt};
+  await selectStoredCourse(page);
+  await page.route('**/api/**',async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
+    if(path==='/api/catalog')return json(catalog);
+    if(path==='/api/meta')return json({version:'1.12.0-cloud',frontend_version:'16.6.1'});
+    if(path==='/api/watch')return json({ok:true,has_snapshot:true,sync});
+    if(path==='/api/timetable/g1')return json({snapshot:snap,sync});
+    if(path==='/api/changes/g1')return json([]);
+    if(path==='/api/push/public-key')return json({publicKey:null});
+    return json({detail:'not-found'},404);
+  });
+  await page.goto('/');
+  await expect(page.locator('.header-status')).toContainText('Not updated');
+  await expect(page.locator('.header-status')).not.toContainText('Updated');
+  await expect(page.locator('.stale-banner')).toContainText('Timetable source unavailable');
+  await expect(page.locator('.stale-banner')).toContainText('Last successful sync');
+});
+
+test('stale cloud data without an explicit source error shows an update delay',async({page})=>{
+  const snap=snapshot(),staleAt=new Date(Date.now()-7*60*60*1000).toISOString();
+  const sync={group_id:'g1',status:'queued',last_success_at:staleAt};
+  await selectStoredCourse(page);
+  await page.route('**/api/**',async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
+    if(path==='/api/catalog')return json(catalog);
+    if(path==='/api/meta')return json({version:'1.12.0-cloud',frontend_version:'16.6.1'});
+    if(path==='/api/watch')return json({ok:true,has_snapshot:true,sync});
+    if(path==='/api/timetable/g1')return json({snapshot:snap,sync});
+    if(path==='/api/changes/g1')return json([]);
+    if(path==='/api/push/public-key')return json({publicKey:null});
+    return json({detail:'not-found'},404);
+  });
+  await page.goto('/');
+  await expect(page.locator('.header-status')).toContainText('Not updated');
+  await expect(page.locator('.stale-banner')).toContainText('Timetable update delayed');
 });
