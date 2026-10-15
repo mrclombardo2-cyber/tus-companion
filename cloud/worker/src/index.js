@@ -17,7 +17,8 @@ const MAX_SCHEDULED_QUEUE_MESSAGES = 1;
 const PUSH_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_SUBSCRIPTIONS_PER_JOB = 40;
 const REMINDER_WINDOW_MINUTES = 3;
-const SOURCE_BROWSER_RECOVERY_MINUTES = 1;
+const SOURCE_BROWSER_RECOVERY_MINUTES = 5;
+const SOURCE_MANUAL_RETRY_HOURS = 6;
 const SOURCE_BROWSER_RECOVERY_TIMEOUT_MS = 45_000;
 const SOURCE_HTTP_KEEPALIVE_MINUTES = 8;
 const NEXT_WEEK_REFRESH_MINUTES = 10;
@@ -638,6 +639,19 @@ async function browserClickStudentGateway(page) {
   return false;
 }
 
+async function browserManualLoginDetected(context) {
+  for (const page of context.pages()) {
+    try {
+      const host = new URL(page.url()).hostname.toLowerCase();
+      if (["login.microsoftonline.com", "login.live.com", "login.microsoft.com"].includes(host)) return true;
+      for (const selector of ['input[type="password"]', 'input[name="loginfmt"]', 'input[name="otc"]']) {
+        if (await page.locator(selector).first().isVisible({ timeout: 250 })) return true;
+      }
+    } catch {}
+  }
+  return false;
+}
+
 async function recoverSourceSessionWithBrowser(env) {
   if (!env.BROWSER) throw new Error("browser-recovery-binding-missing");
   const storage = await loadSourceStorageState(env);
@@ -655,7 +669,7 @@ async function recoverSourceSessionWithBrowser(env) {
     let ready = await browserOpenStudentSet(page);
     if (!ready) {
       const clicked = await browserClickStudentGateway(page);
-      if (!clicked) throw new Error("browser-recovery-login-required");
+      if (!clicked) throw new Error((await browserManualLoginDetected(context)) ? "browser-recovery-login-required" : "browser-recovery-student-gateway-unavailable");
 
       const deadline = Date.now() + SOURCE_BROWSER_RECOVERY_TIMEOUT_MS;
       while (Date.now() < deadline && !ready) {
@@ -669,7 +683,7 @@ async function recoverSourceSessionWithBrowser(env) {
       }
     }
 
-    if (!ready) throw new Error("browser-recovery-login-required");
+    if (!ready) throw new Error((await browserManualLoginDetected(context)) ? "browser-recovery-login-required" : "browser-recovery-timed-out");
 
     const refreshed = await context.storageState();
     await saveSourceStorageState(env, refreshed);
@@ -694,7 +708,7 @@ async function recoverSourceSessionWithBrowser(env) {
 
 async function keepSourceSessionWarm(env) {
   const manualRequired = await getMetaValue(env, "source_browser_manual_required_at");
-  if (manualRequired) return { attempted: false, ok: false, manual_required: true };
+  if (manualRequired && ageMs(manualRequired) < SOURCE_MANUAL_RETRY_HOURS * 3600_000) return { attempted: false, ok: false, manual_required: true };
 
   const lastSuccess = await getMetaValue(env, "source_keepalive_last_success_at");
   if (lastSuccess && ageMs(lastSuccess) < SOURCE_HTTP_KEEPALIVE_MINUTES * 60_000) {
@@ -709,6 +723,7 @@ async function keepSourceSessionWarm(env) {
     await saveSourceStorageState(env, session.storageState());
     await setMetaValue(env, "source_keepalive_last_success_at", nowIso());
     await setMetaValue(env, "source_keepalive_last_error", "");
+    await setMetaValue(env, "source_browser_manual_required_at", "");
     await setMetaValue(env, "source_session_error", "");
     await setMetaValue(env, "source_session_last_retry_at", "");
     return { attempted: true, ok: true };
@@ -731,7 +746,7 @@ async function maybeRecoverSourceSession(env) {
   // If Microsoft has explicitly fallen back to interactive credentials/MFA,
   // repeating headless browser attempts cannot solve it and only wastes Browser Run.
   const manualRequired = await getMetaValue(env, "source_browser_manual_required_at");
-  if (manualRequired) return { attempted: false, recovered: false, manual_required: true };
+  if (manualRequired && ageMs(manualRequired) < SOURCE_MANUAL_RETRY_HOURS * 3600_000) return { attempted: false, recovered: false, manual_required: true };
 
   const lastAttempt = await getMetaValue(env, "source_browser_last_attempt_at");
   if (lastAttempt && ageMs(lastAttempt) < SOURCE_BROWSER_RECOVERY_MINUTES * 60_000) {
