@@ -168,3 +168,18 @@ test("app shell responses are explicitly no-store at the Worker edge", () => {
   assert.match(source, /cache-control", "no-store, max-age=0, must-revalidate"/);
   assert.match(source, /service-worker-allowed", "\/"/);
 });
+
+test("portable recovery never needs cloud config or hard-coded credentials", () => {
+  const launcher = readFileSync(new URL("../RECOVER-TUS-PORTABLE.ps1", import.meta.url), "utf8");
+  const workflow = readFileSync(new URL("../.github/workflows/recover-tus-from-browser.yml", import.meta.url), "utf8");
+  const uploader = readFileSync(new URL("../cloud/collector/recover_from_actions_secret.py", import.meta.url), "utf8");
+  assert.match(launcher, /secret set TUS_RECOVERY_STATE_B64/);
+  assert.match(launcher, /secret delete TUS_RECOVERY_STATE_B64/);
+  assert.match(launcher, /app\.cli login/);
+  assert.doesNotMatch(launcher, /\.cloud\.local\.json/);
+  assert.match(workflow, /workflow_dispatch/);
+  assert.match(workflow, /secrets\.TUS_RECOVERY_STATE_B64/);
+  assert.match(workflow, /secrets\.CLOUD_ADMIN_TOKEN/);
+  assert.match(uploader, /--upload-local-session/);
+  assert.match(uploader, /STATE_FILE\.unlink/);
+});
