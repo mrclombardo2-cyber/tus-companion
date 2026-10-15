@@ -10,7 +10,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.5.4';
+const CLIENT_VERSION='16.6.0';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -447,8 +447,9 @@ async function readyServiceWorker(timeoutMs=2500){
 function cleanVersionParam(){
   try{
     const u=new URL(location.href);
-    if(!u.searchParams.has('_appv'))return;
+    if(!u.searchParams.has('_appv')&&!u.searchParams.has('_sw'))return;
     u.searchParams.delete('_appv');
+    u.searchParams.delete('_sw');
     history.replaceState(null,'',u.pathname+(u.searchParams.size?'?'+u.searchParams.toString():'')+u.hash);
   }catch{}
 }
@@ -457,11 +458,10 @@ async function reloadForClientVersion(latest){
   clientVersionReloading=true;
   try{
     if('serviceWorker'in navigator){
-      const reg=await navigator.serviceWorker.getRegistration();
-      if(reg){
-        await reg.update().catch(()=>{});
-        if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
-      }
+      const target='/sw.js?v='+encodeURIComponent(String(latest||CLIENT_VERSION));
+      const reg=await navigator.serviceWorker.register(target,{scope:'/',updateViaCache:'none'});
+      await reg.update().catch(()=>{});
+      if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
     }
   }catch{}
   const u=new URL(location.href);
@@ -631,7 +631,7 @@ async function init(){
       if(swControllerSeen){swControllerReloading=true;window.location.reload();return}
       swControllerSeen=true;
     });
-    const reg=await navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'});
+    const reg=await navigator.serviceWorker.register('/sw.js?v='+encodeURIComponent(CLIENT_VERSION),{scope:'/',updateViaCache:'none'});
     await reg.update().catch(()=>{});
     if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
   }catch{}}
