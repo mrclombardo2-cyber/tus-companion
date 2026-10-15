@@ -10,7 +10,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.6.1';
+const CLIENT_VERSION='16.6.2';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -209,12 +209,8 @@ function render(){
   let body=state.tab==='today'?renderToday():state.tab==='week'?renderWeek():state.tab==='changes'?renderChanges():renderSettings();
   const syncUi=syncDisplay();
   const staleReason=staleSyncReason();
-  const lastSuccessful=state.sync?.last_success_at;
-  const sourceInfo=lastSuccessful?'Last successful sync '+formatDetected(lastSuccessful)+'. ':'No successful sync has been recorded. ';
-  const staleTitle=staleReason==='source'?'Timetable source unavailable':'Timetable update delayed';
-  const staleBanner=staleReason?'<div class="offline-banner stale-banner" role="alert"><div class="offline-copy"><b>'+esc(staleTitle)+'</b><span>'+esc(sourceInfo)+'The timetable may be outdated. Verify important changes in the official TUS timetable.</span></div><button id="retry-sync" class="small-ghost" type="button">Retry now</button></div>':'';
   const cacheBanner=(state.offline||state.usingCached)?`<div class="offline-banner" role="status"><div class="offline-copy"><b>${state.offline?'Offline mode':'Reconnecting'}</b><span>${state.offlineSavedAt?`Showing data saved ${esc(formatDetected(state.offlineSavedAt))}.`:'Showing the last timetable saved on this device.'} ${state.offline?'Changes will refresh automatically when the connection returns.':'Automatic retries are running now.'}</span></div>${state.offline?'':'<button id="retry-sync" class="small-ghost" type="button">Retry now</button>'}</div>`:'';
-  const freshnessBanner=cacheBanner||staleBanner;
+  const freshnessBanner=cacheBanner;
   APP.innerHTML=`<main class="app ${state.tab==='week'?'week-app':''}"><header><div><p class="kicker">TUS ATHLONE</p><h1>${title}</h1></div><div class="header-status ${staleReason?'error':''}">${esc(syncUi.updated)}</div></header>${freshnessBanner}${body}${nav()}</main>${renderOverlays()}${state.toast?`<div class="toast" role="status">${esc(state.toast)}</div>`:''}`;
   bindCommon();
 }
