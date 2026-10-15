@@ -170,10 +170,26 @@ jobs:
           before="$(printf '%s\n' "$health" | jq -r '.collector.last_cycle_finished_at // ""')"
 
           echo "Checking public app metadata and catalog..."
-          meta="$(curl --fail --silent --show-error "$base/api/meta")"
-          printf '%s\n' "$meta" | jq -e '.version == "1.12.0-cloud" and .frontend_version == "16.6.0"' >/dev/null
-          curl --fail --silent --show-error "$base/api/catalog" | jq -e '.departments | length > 0' >/dev/null
-
+          public_ok=false
+          for attempt in $(seq 1 12); do
+            meta="$(curl --silent --show-error "$base/api/meta" || true)"
+            catalog="$(curl --silent --show-error "$base/api/catalog" || true)"
+            live_app="$(printf '%s\n' "$meta" | jq -r '.frontend_version // ""' 2>/dev/null || true)"
+            live_worker="$(printf '%s\n' "$meta" | jq -r '.version // ""' 2>/dev/null || true)"
+            departments="$(printf '%s\n' "$catalog" | jq -r '.departments | length' 2>/dev/null || echo 0)"
+            if [ "$live_worker" = "1.12.0-cloud" ] && [ "$live_app" = "16.6.0" ] && [ "${departments:-0}" -gt 0 ] 2>/dev/null; then
+              public_ok=true
+              break
+            fi
+            echo "Waiting for public API propagation ($attempt/12): worker=$live_worker app=$live_app departments=${departments:-0}"
+            sleep 5
+          done
+          if [ "$public_ok" != "true" ]; then
+            echo "Public API/app metadata did not stabilize after deployment."
+            printf '%s\n' "$meta"
+            printf '%s\n' "$catalog" | head -c 1000
+            exit 1
+          fi
 
           echo "Waiting for scheduler and automatic source-session recovery..."
           ok=false
