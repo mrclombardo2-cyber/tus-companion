@@ -148,3 +148,20 @@ test("rejected transient timetable snapshots retry quickly", () => {
   assert.match(source, /timetable-group-mismatch\|unstable-timetable-source/);
   assert.match(source, /delaySeconds: 10/);
 });
+
+
+test("Cloudflare cron keeps the authenticated timetable source warm", () => {
+  const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  assert.match(source, /const SOURCE_HTTP_KEEPALIVE_MINUTES = 8;/);
+  assert.match(source, /async function keepSourceSessionWarm\(env\)/);
+  assert.match(source, /await session\.ensureReady\(\)/);
+  assert.match(source, /await saveSourceStorageState\(env, session\.storageState\(\)\)/);
+  assert.match(source, /await keepSourceSessionWarm\(env\);/);
+});
+
+test("app shell responses are explicitly no-store at the Worker edge", () => {
+  const source = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  assert.match(source, /"\/app\.js","\/styles\.css","\/manifest\.webmanifest"/);
+  assert.match(source, /cache-control", "no-store, max-age=0, must-revalidate"/);
+  assert.match(source, /service-worker-allowed", "\/"/);
+});
