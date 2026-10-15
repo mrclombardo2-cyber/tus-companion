@@ -229,12 +229,15 @@ test("installed PWA actively upgrades to the newest client shell",async({page})=
   await mockApi(page);
   await page.goto("/");
   const appSource=await page.evaluate(async()=>await fetch("/app.js?v=16.6.0",{cache:"no-store"}).then(r=>r.text()));
-  const swSource=await page.evaluate(async()=>await fetch("/sw.js",{cache:"no-store"}).then(r=>r.text()));
+  const swSource=await page.evaluate(async()=>await fetch("/sw.js?v=16.6.0",{cache:"no-store"}).then(r=>r.text()));
   expect(appSource).toContain("const CLIENT_VERSION='16.6.0'");
+  expect(appSource).toContain("register('/sw.js?v='+encodeURIComponent(CLIENT_VERSION)");
   expect(appSource).toContain("ensureLatestClient");
   expect(appSource).toContain("visibilitychange");
   expect(swSource).toContain("client.navigate");
   expect(swSource).toContain("includeUncontrolled:true");
+  expect(swSource).toContain("navigationPreload");
+  expect(swSource).toContain("cache:'no-store'");
   expect(swSource).toContain("tus-companion-v16.6.0");
 });
 
