@@ -321,6 +321,9 @@ test('stale cloud data and a source outage are never labelled Updated',async({pa
   const staleAt=new Date(Date.now()-9*60*60*1000).toISOString();
   const sync={group_id:'g1',status:'error',error:'source-session-unavailable',last_success_at:staleAt};
   await selectStoredCourse(page);
+  await page.addInitScript(({snap,sync})=>{
+    localStorage.setItem('tus-companion-offline-v1',JSON.stringify({group_id:'g1',saved_at:sync.last_success_at,snapshot:snap,sync,changes:[]}));
+  },{snap,sync});
   await page.route('**/api/**',async route=>{
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
@@ -343,6 +346,9 @@ test('stale cloud data without an explicit source error shows an update delay',a
   const snap=snapshot(),staleAt=new Date(Date.now()-7*60*60*1000).toISOString();
   const sync={group_id:'g1',status:'queued',last_success_at:staleAt};
   await selectStoredCourse(page);
+  await page.addInitScript(({snap,sync})=>{
+    localStorage.setItem('tus-companion-offline-v1',JSON.stringify({group_id:'g1',saved_at:sync.last_success_at,snapshot:snap,sync,changes:[]}));
+  },{snap,sync});
   await page.route('**/api/**',async route=>{
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
