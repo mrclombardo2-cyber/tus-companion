@@ -195,8 +195,15 @@ jobs:
           done
 
           if [ "$ok" != "true" ]; then
+            current="$(curl --fail --silent --show-error "$base/health")"
+            manual_required="$(printf '%s\n' "$current" | jq -r '.collector.source_browser_manual_required_at // ""')"
+            if [ -n "$manual_required" ]; then
+              echo "::warning::App shell/Worker deployment is healthy, but the upstream TUS/Microsoft source requires one interactive MFA reconnect."
+              printf '%s\n' "$current" | jq .
+              exit 0
+            fi
             echo "The Worker deployed, but healthy scheduler/source-session state was not confirmed."
-            curl --silent --show-error "$base/health" | jq .
+            printf '%s\n' "$current" | jq .
             exit 1
           fi
 
