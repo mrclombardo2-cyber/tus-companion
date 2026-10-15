@@ -128,6 +128,9 @@ class CloudApi:
     def run_catalog(self):
         return self._request("POST", "/api/admin/run-catalog", json={})
 
+    def watch_group(self, department_id: str, group_id: str):
+        return self._request("POST", "/api/watch", json={"department_id": department_id, "group_id": group_id})
+
     def health(self):
         r = self.client.get(self.base_url + "/health", headers={"user-agent": "tus-companion-admin-reconnect/1.0"})
         if r.status_code >= 400:
@@ -196,6 +199,20 @@ def upload_local_session_and_verify(api: CloudApi, cipher_key: bytes) -> None:
             raise RuntimeError(f"reconnect-verification-failed: {source_error}")
         if catalog_at and catalog_at != previous_catalog:
             print(f"[reconnect] verified: catalogue refreshed at {catalog_at}")
+            plan = api.sync_plan()
+            groups = plan.get("groups") or []
+            queued = 0
+            for item in groups:
+                department_id = str(item.get("department_id") or "")
+                group_id = str(item.get("group_id") or "")
+                if not department_id or not group_id:
+                    continue
+                try:
+                    api.watch_group(department_id, group_id)
+                    queued += 1
+                except Exception as exc:
+                    print(f"[reconnect] could not queue {group_id}: {exc}")
+            print(f"[reconnect] queued {queued} active timetable group(s) for immediate refresh")
             return
 
     raise RuntimeError(
