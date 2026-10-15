@@ -4,9 +4,9 @@ import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot, validateSnapshotForGroup, suppressTransientReversals } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
 
-const APP_VERSION = "1.11.4-cloud";
+const APP_VERSION = "1.12.0-cloud";
 const LEGAL_VERSION = "2026-09-30";
-const FRONTEND_VERSION = "16.5.4";
+const FRONTEND_VERSION = "16.6.0";
 const INTEREST_TTL_HOURS = 6;
 const INTEREST_TOUCH_MINUTES = 15;
 const CATALOG_REFRESH_HOURS = 24;
@@ -1196,10 +1196,13 @@ export default {
       const url = new URL(request.url);
       if (url.pathname === "/health" || url.pathname.startsWith("/api/")) return securityHeaders(await route(request, env));
       const asset = await env.ASSETS.fetch(request);
-      if (request.mode === "navigate" || url.pathname === "/" || url.pathname === "/index.html" || url.pathname === "/sw.js") {
+      const appShellPath = new Set(["/","/index.html","/sw.js","/app.js","/styles.css","/manifest.webmanifest"]);
+      if (request.mode === "navigate" || appShellPath.has(url.pathname)) {
         const headers = new Headers(asset.headers);
         headers.set("cache-control", "no-store, max-age=0, must-revalidate");
         headers.set("pragma", "no-cache");
+        headers.set("expires", "0");
+        if (url.pathname === "/sw.js") headers.set("service-worker-allowed", "/");
         return securityHeaders(new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers }));
       }
       return securityHeaders(asset);
