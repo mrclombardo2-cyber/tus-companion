@@ -72,6 +72,15 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 Non committare token, cookie, chiavi private, `.cloud.local.json`, file di sessione o `.dev.vars`.
 
+### Se il browser TUS resta fermo
+
+Il programma indica adesso solo la **fase dell'accesso** (es. `TUS landing page`, `Microsoft sign-in / MFA`, `TUS Student Information`) senza registrare indirizzi completi, codici o password.
+
+- `Microsoft sign-in / MFA`: completa la schermata ufficiale. Il processo prosegue quando il portale torna agli orari.
+- `TUS landing page` per più di due minuti: se il collegamento automatico non compare, clicca **Student** una volta nel browser aperto dal programma.
+- `TUS Student Information`: il programma tenta di aprire da solo **Student Set - by Name**.
+- Se il messaggio finale è `TUS login not verified`, fornisci solo le righe che iniziano con `[TUS login]` e, se necessario, uno screenshot della pagina **senza password, codici o token**. Il programma non tenta di aggirare MFA.
+
 ## Ripristino TUS quando hai soltanto GitHub
 
 Su un PC Windows, scarica e avvia [RECOVER-TUS-PORTABLE.cmd](https://github.com/mrclombardo2-cyber/tus-companion/raw/refs/heads/main/RECOVER-TUS-PORTABLE.cmd). Non occorrono una cartella locale preesistente, `.cloud.local.json` o conoscere le credenziali Cloudflare.
