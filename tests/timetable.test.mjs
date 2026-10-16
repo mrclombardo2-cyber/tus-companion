@@ -183,3 +183,15 @@ test("portable recovery never needs cloud config or hard-coded credentials", () 
   assert.match(uploader, /--upload-local-session/);
   assert.match(uploader, /STATE_FILE\.unlink/);
 });
+
+test("interactive browser login prints redacted stages and prevents gateway click loops", () => {
+  const source = readFileSync(new URL("../backend/app/collector/playwright_collector.py", import.meta.url), "utf8");
+  assert.match(source, /def _login_stage\(page: Page\)/);
+  assert.match(source, /\[TUS login\] Browser stage:/);
+  assert.match(source, /LOGIN_GATEWAY_RETRY_SECONDS = 60/);
+  assert.match(source, /if not microsoft_open:/);
+  assert.match(source, /urlparse\(page\.url\)\.hostname/);
+  assert.doesNotMatch(source, /print\(page\.url\)/);
+  assert.match(source, /link\.click\(timeout=min\(timeout_ms, 10_000\)\)/);
+  assert.doesNotMatch(source, /with page\.expect_navigation\(/);
+});
