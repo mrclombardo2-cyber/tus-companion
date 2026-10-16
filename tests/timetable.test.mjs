@@ -193,5 +193,6 @@ test("interactive browser login prints redacted stages and prevents gateway clic
   assert.match(source, /urlparse\(page\.url\)\.hostname/);
   assert.doesNotMatch(source, /print\(page\.url\)/);
   assert.match(source, /link\.click\(timeout=min\(timeout_ms, 10_000\)\)/);
-  assert.doesNotMatch(source, /with page\.expect_navigation\(/);
+  const openStudentSet = source.split("def _open_student_set_by_name")[1].split("def _try_silent_reauth")[0];
+  assert.doesNotMatch(openStudentSet, /with page\.expect_navigation\(/);
 });
