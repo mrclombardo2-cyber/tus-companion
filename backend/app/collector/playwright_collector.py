@@ -6,8 +6,9 @@ import os
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
-from playwright.sync_api import Page, sync_playwright, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Page, sync_playwright
 
 from ..settings import BASE_URL, DATA_DIR
 from ..default_page import parse_departments_and_groups
@@ -17,6 +18,8 @@ PROFILE = ROOT / ".tus-browser-profile"
 SESSION_DIR = ROOT / ".tus-session"
 SESSION_STATE = SESSION_DIR / "storage_state.json"
 LOGIN_TIMEOUT_MS = 10 * 60 * 1000
+LOGIN_GATEWAY_RETRY_SECONDS = 60
+
 LOCK = threading.RLock()
 
 
@@ -97,12 +100,41 @@ def _student_set_link_visible(page: Page) -> bool:
         return False
 
 
+def _login_stage(page: Page) -> str:
+    """Non-sensitive progress: report site category only, never an auth URL or form data."""
+    try:
+        if page.is_closed():
+            return "browser-window-closed"
+        host = (urlparse(page.url).hostname or "").lower()
+        if host == (urlparse(BASE_URL).hostname or "").lower():
+            if _ready(page):
+                return "TUS timetable ready"
+            if _student_set_link_visible(page):
+                return "TUS Student Information"
+            return "TUS landing page"
+        if host == "login.microsoftonline.com" or host.endswith(".login.microsoftonline.com"):
+            return "Microsoft sign-in / MFA"
+        if host in {"login.live.com", "login.microsoft.com"}:
+            return "Microsoft sign-in / MFA"
+        if host == "":
+            return "browser loading"
+        return "external sign-in or redirect"
+    except Exception:
+        return "browser navigating"
+
+
 def _click_student_gateway(page: Page) -> bool:
     """Click the public TUS 'Student' gateway automatically if it is present.
 
     TUS has used different HTML controls for this button, so use several narrow
     selectors rather than relying on one specific tag.
     """
+    # Never click links containing "Student" on third-party/Microsoft pages.
+    try:
+        if (urlparse(page.url).hostname or "").lower() != (urlparse(BASE_URL).hostname or "").lower():
+            return False
+    except Exception:
+        return False
     selectors = (
         'input[type="submit"][value="Student"]',
         'input[type="button"][value="Student"]',
@@ -132,16 +164,9 @@ def _open_student_set_by_name(page: Page, timeout_ms: int = 20_000) -> bool:
             return False
 
         print("Opening 'Student Set - by Name' automatically...")
-        # It is an ASP.NET __doPostBack link. Depending on cache/session state it
-        # may produce a normal navigation or update the current document.
-        try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=timeout_ms):
-                link.click()
-        except PlaywrightTimeoutError:
-            # Some deployments complete the postback without Playwright seeing a
-            # full navigation event. The filter appearing is the authoritative test.
-            pass
-
+        # ASP.NET may post back without a full navigation. A navigation expectation
+        # previously wasted up to 20 seconds per attempt on these normal updates.
+        link.click(timeout=min(timeout_ms, 10_000))
         page.locator("#dlFilter2").wait_for(state="visible", timeout=timeout_ms)
         return True
     except Exception:
@@ -202,51 +227,81 @@ def _ensure_timetable_page(page: Page, allow_interactive_login: bool) -> bool:
 
 
 def _complete_login(page: Page) -> None:
-    """Automate TUS navigation around the user-controlled Microsoft sign-in.
+    """Continue navigating the official timetable while the user handles Microsoft MFA.
 
-    User interaction is needed only on Microsoft's authentication UI (credentials,
-    MFA, consent if any). TUS's own 'Student' and 'Student Set - by Name' clicks are
-    performed automatically.
+    Track authenticated TUS pages across windows and tabs, avoid repeatedly
+    restarting the Student sign-in gateway, and emit *redacted* progress stages.
+    This routine never inspects password/MFA values or prints browser URLs.
     """
-    if _ready(page):
-        return
-    if _open_student_set_by_name(page):
-        return
+    print("Complete Microsoft/TUS sign-in only if requested in the opened browser.", flush=True)
+    print("TUS Student and Student Set navigation will be attempted automatically.", flush=True)
 
-    _click_student_gateway(page)
-    print("Complete only the Microsoft/TUS sign-in in the opened browser.")
-    print("Do not click TUS 'Student' or 'Student Set - by Name': those are automated.")
-    print("After authentication, TUS navigation will continue automatically...")
+    deadline = time.monotonic() + LOGIN_TIMEOUT_MS / 1000
+    last_gateway_click: dict[int, float] = {}
+    last_progress = ""
+    last_notice = 0.0
+    manual_tip_shown = False
+    began_at = time.monotonic()
 
-    deadline = time.monotonic() + (LOGIN_TIMEOUT_MS / 1000)
     while time.monotonic() < deadline:
-        if _ready(page):
-            return
-        if _open_student_set_by_name(page, timeout_ms=10_000):
-            return
+        pages = [p for p in reversed(page.context.pages) if not p.is_closed()]
+        if not pages:
+            raise RuntimeError("TUS login browser was closed before authentication completed")
 
-        # The Student gateway can render slightly after DOMContentLoaded. Retry the
-        # narrow gateway detection here so the user never has to click it manually.
-        _click_student_gateway(page)
+        # Prefer the original stable Page reference used by collectors. When the
+        # provider opens a new tab, copy its authenticated landing URL back to
+        # that Page; the same browser context shares Microsoft/TUS cookies.
+        for candidate in pages:
+            if _ready(candidate) or _open_student_set_by_name(candidate, timeout_ms=6_000):
+                if candidate is page:
+                    return
+                if not page.is_closed():
+                    try:
+                        page.goto(candidate.url, wait_until="domcontentloaded", timeout=20_000)
+                        if _ready(page) or _open_student_set_by_name(page, timeout_ms=6_000):
+                            return
+                    except Exception:
+                        pass
+                # The local one-shot login only needs the shared cookie state;
+                # if the original tab closed, a ready authenticated tab is valid.
+                if page.is_closed():
+                    return
 
-        # On some authentication flows the final TUS page may become a newly
-        # opened tab/window. Follow it without requiring the user to click it.
-        for candidate in reversed(page.context.pages):
-            if candidate is page:
-                continue
-            try:
-                if _ready(candidate) or _open_student_set_by_name(candidate, timeout_ms=10_000):
-                    # Reuse the original Page object by navigating it to the ready URL
-                    # so the rest of the collector has one stable page reference.
-                    page.goto(candidate.url, wait_until="domcontentloaded", timeout=60_000)
-                    if _ready(page) or _open_student_set_by_name(page):
-                        return
-            except Exception:
-                continue
+        stages = sorted({_login_stage(p) for p in pages})
+        summary = ", ".join(stages)
+        now = time.monotonic()
+        if summary != last_progress or now - last_notice >= 45:
+            print(f"[TUS login] Browser stage: {summary}", flush=True)
+            last_progress = summary
+            last_notice = now
 
-        time.sleep(0.5)
+        # The Microsoft authentication page may be another tab. Do not restart
+        # the TUS sign-in flow while that page is open or during MFA.
+        microsoft_open = any("Microsoft sign-in" in stage for stage in stages)
+        if not microsoft_open:
+            for candidate in pages:
+                if _login_stage(candidate) != "TUS landing page":
+                    continue
+                key = id(candidate)
+                if now - last_gateway_click.get(key, -1e9) >= LOGIN_GATEWAY_RETRY_SECONDS:
+                    last_gateway_click[key] = now
+                    _click_student_gateway(candidate)
 
-    raise RuntimeError("Login not completed within 10 minutes.")
+        if not manual_tip_shown and now - began_at >= 120:
+            # Printed once at approximately two minutes, not every half-second.
+            print("[TUS login] If the browser is still on a TUS landing page, "
+                  "you can click its Student link once. Complete any Microsoft "
+                  "prompt in the browser; the collector continues waiting.", flush=True)
+            manual_tip_shown = True
+
+        time.sleep(1)
+
+    # No secrets, query strings, form values or full URLs in failure messages.
+    raise RuntimeError(
+        "TUS login not verified within 10 minutes. "
+        f"Last browser stage: {last_progress or 'unknown'}. "
+        "Check which page is visible in the browser and try again."
+    )
 
 
 # ---------------------------------------------------------------------------
