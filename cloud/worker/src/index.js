@@ -727,9 +727,12 @@ async function recoverSourceSessionWithBrowser(env) {
 async function keepSourceSessionWarm(env) {
   // Keep trying the low-cost HTTP cookie renewal. A previous interactive/MFA
   // failure throttles costly browser launches, not safe silent HTTP attempts.
-  const lastSuccess = await getMetaValue(env, "source_keepalive_last_success_at");
-  if (lastSuccess && ageMs(lastSuccess) < SOURCE_HTTP_KEEPALIVE_MINUTES * 60_000) {
-    return { attempted: false, ok: true };
+  const lastAttempt = await getMetaValue(env, "source_keepalive_last_attempt_at");
+  if (lastAttempt && ageMs(lastAttempt) < SOURCE_HTTP_KEEPALIVE_MINUTES * 60_000) {
+    // Bound HTTP checks even when Microsoft cookies have expired. Retrying
+    // every minute after an MFA failure adds load without improving recovery.
+    const sourceError = await getMetaValue(env, "source_session_error");
+    return { attempted: false, ok: !sourceError };
   }
 
   await setMetaValue(env, "source_keepalive_last_attempt_at", nowIso());
