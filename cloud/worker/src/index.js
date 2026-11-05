@@ -149,8 +149,12 @@ async function health(env) {
     activeGroups(env),
   ]);
   const delayedGroups=groups.filter((g)=>!g.last_success_at||ageMs(g.last_success_at)>10*60_000);
+  const sourceNeedsLogin=Boolean(manualRequired && ageMs(manualRequired)<SOURCE_MANUAL_RETRY_HOURS*3600_000);
+  const schedulerDelayed=!lastCycle||ageMs(lastCycle)>15*60_000;
+  const degraded=Boolean(sourceError||sourceNeedsLogin||schedulerDelayed||delayedGroups.length);
   return json({
-    status: "ok",
+    status: degraded ? "degraded" : "ok",
+    recovery_action: sourceNeedsLogin ? "complete-official-microsoft-login" : sourceError ? "automatic-session-recovery" : schedulerDelayed ? "investigate-scheduler" : delayedGroups.length ? "check-group-sync-queue" : "none",
     platform: "cloudflare-workers-d1-queues-browser-run",
     version: APP_VERSION,
     collector: {
