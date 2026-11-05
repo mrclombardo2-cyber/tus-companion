@@ -601,6 +601,11 @@ async function loadSourceStorageState(env) {
 }
 
 
+async function sourceSessionRevisionMatches(env, expected) {
+  const row = await env.DB.prepare("SELECT updated_at FROM source_session WHERE id=1").first();
+  return Boolean(expected && row?.updated_at === expected);
+}
+
 async function saveSourceStorageState(env, state) {
   const expected = String(state?.__tusSourceRevision || "");
   if (!expected) throw new Error("source-session-unversioned-state");
@@ -704,10 +709,10 @@ async function recoverSourceSessionWithBrowser(env) {
     if (!ready) throw new Error((await browserManualLoginDetected(context)) ? "browser-recovery-login-required" : "browser-recovery-timed-out");
 
     const refreshed = { ...(await context.storageState()), __tusSourceRevision: storage.__tusSourceRevision };
-    if (!(await saveSourceStorageState(env, refreshed))) throw new Error("source-session-superseded");
 
-    // Verify the refreshed browser state through the lightweight HTTP collector
-    // before declaring recovery successful.
+    // Never persist a candidate session until the normal HTTP collector can
+    // actually reach the timetable page. This avoids poisoning stored cookies
+    // if Microsoft completes one redirect but leaves authentication unfinished.
     const verify = new ScientiaSession(refreshed);
     await verify.ensureReady();
     if (!(await saveSourceStorageState(env, verify.storageState()))) throw new Error("source-session-superseded");
@@ -736,8 +741,10 @@ async function keepSourceSessionWarm(env) {
   }
 
   await setMetaValue(env, "source_keepalive_last_attempt_at", nowIso());
+  let loadedRevision = "";
   try {
     const storage = await loadSourceStorageState(env);
+    loadedRevision = storage.__tusSourceRevision;
     const session = new ScientiaSession(storage);
     await session.ensureReady();
     const saved = await saveSourceStorageState(env, session.storageState());
@@ -750,6 +757,11 @@ async function keepSourceSessionWarm(env) {
     return { attempted: true, ok: true };
   } catch (err) {
     const message = String(err?.message || err);
+    if (loadedRevision && !(await sourceSessionRevisionMatches(env, loadedRevision))) {
+      // The failing probe started before a newly uploaded source session.
+      // Do not re-mark the fresh session as expired.
+      return { attempted: true, ok: true, superseded: true };
+    }
     await setMetaValue(env, "source_keepalive_last_error", message);
     if (/source-session-expired/i.test(message)) {
       await setMetaValue(env, "source_session_error", "source-session-expired");
