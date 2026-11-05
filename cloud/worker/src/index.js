@@ -6,7 +6,7 @@ import { buildCalendar } from "./calendar.js";
 
 const APP_VERSION = "1.12.0-cloud";
 const LEGAL_VERSION = "2026-09-30";
-const FRONTEND_VERSION = "16.6.2";
+const FRONTEND_VERSION = "16.6.3";
 const INTEREST_TTL_HOURS = 6;
 const INTEREST_TOUCH_MINUTES = 15;
 const CATALOG_REFRESH_HOURS = 24;
@@ -578,7 +578,7 @@ async function sourceCryptoKey(env) {
 }
 
 async function loadSourceStorageState(env) {
-  const row = await env.DB.prepare("SELECT ciphertext,nonce FROM source_session WHERE id=1").first();
+  const row = await env.DB.prepare("SELECT ciphertext,nonce,updated_at FROM source_session WHERE id=1").first();
   if (!row?.ciphertext || !row?.nonce) throw new Error("source-session-not-configured");
   const key = await sourceCryptoKey(env);
   let plain;
@@ -587,19 +587,33 @@ async function loadSourceStorageState(env) {
   } catch {
     throw new Error("source-session-decryption-failed");
   }
-  try { return JSON.parse(new TextDecoder().decode(plain)); } catch { throw new Error("source-session-invalid-json"); }
+  try {
+    const state = JSON.parse(new TextDecoder().decode(plain));
+    if (!state || typeof state !== "object" || !Array.isArray(state.cookies)) throw new Error("invalid");
+    // A source-session revision is carried through ScientiaSession/CookieJar.
+    // It is excluded from the encrypted Playwright storage_state during saving.
+    return { ...state, __tusSourceRevision: String(row.updated_at || "") };
+  } catch { throw new Error("source-session-invalid-json"); }
 }
 
 
 async function saveSourceStorageState(env, state) {
+  const expected = String(state?.__tusSourceRevision || "");
+  if (!expected) throw new Error("source-session-unversioned-state");
+  // Never let a cron/queue job started under an older source session erase a
+  // newly uploaded or refreshed Microsoft session. The D1 update is atomic.
+  const { __tusSourceRevision: _revision, ...storageState } = state;
   const key = await sourceCryptoKey(env);
   const nonce = crypto.getRandomValues(new Uint8Array(12));
-  const plaintext = new TextEncoder().encode(JSON.stringify(state));
+  const plaintext = new TextEncoder().encode(JSON.stringify(storageState));
   const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce, additionalData: SESSION_AAD }, key, plaintext);
-  await env.DB.prepare(
-    "INSERT INTO source_session(id,ciphertext,nonce,updated_at) VALUES(1,?,?,?) " +
-    "ON CONFLICT(id) DO UPDATE SET ciphertext=excluded.ciphertext,nonce=excluded.nonce,updated_at=excluded.updated_at",
-  ).bind(bytesB64(new Uint8Array(encrypted)), bytesB64(nonce), nowIso()).run();
+  const updated = nowIso();
+  const saved = await env.DB.prepare(
+    "UPDATE source_session SET ciphertext=?,nonce=?,updated_at=? WHERE id=1 AND updated_at=?",
+  ).bind(bytesB64(new Uint8Array(encrypted)), bytesB64(nonce), updated, expected).run();
+  if (!saved.meta?.changes) return false;
+  state.__tusSourceRevision = updated;
+  return true;
 }
 
 
@@ -685,14 +699,14 @@ async function recoverSourceSessionWithBrowser(env) {
 
     if (!ready) throw new Error((await browserManualLoginDetected(context)) ? "browser-recovery-login-required" : "browser-recovery-timed-out");
 
-    const refreshed = await context.storageState();
-    await saveSourceStorageState(env, refreshed);
+    const refreshed = { ...(await context.storageState()), __tusSourceRevision: storage.__tusSourceRevision };
+    if (!(await saveSourceStorageState(env, refreshed))) throw new Error("source-session-superseded");
 
     // Verify the refreshed browser state through the lightweight HTTP collector
     // before declaring recovery successful.
     const verify = new ScientiaSession(refreshed);
     await verify.ensureReady();
-    await saveSourceStorageState(env, verify.storageState());
+    if (!(await saveSourceStorageState(env, verify.storageState()))) throw new Error("source-session-superseded");
 
     await setMetaValue(env, "source_session_error", "");
     await setMetaValue(env, "source_session_last_retry_at", "");
@@ -707,9 +721,8 @@ async function recoverSourceSessionWithBrowser(env) {
 }
 
 async function keepSourceSessionWarm(env) {
-  const manualRequired = await getMetaValue(env, "source_browser_manual_required_at");
-  if (manualRequired && ageMs(manualRequired) < SOURCE_MANUAL_RETRY_HOURS * 3600_000) return { attempted: false, ok: false, manual_required: true };
-
+  // Keep trying the low-cost HTTP cookie renewal. A previous interactive/MFA
+  // failure throttles costly browser launches, not safe silent HTTP attempts.
   const lastSuccess = await getMetaValue(env, "source_keepalive_last_success_at");
   if (lastSuccess && ageMs(lastSuccess) < SOURCE_HTTP_KEEPALIVE_MINUTES * 60_000) {
     return { attempted: false, ok: true };
@@ -720,7 +733,8 @@ async function keepSourceSessionWarm(env) {
     const storage = await loadSourceStorageState(env);
     const session = new ScientiaSession(storage);
     await session.ensureReady();
-    await saveSourceStorageState(env, session.storageState());
+    const saved = await saveSourceStorageState(env, session.storageState());
+    if (!saved) return { attempted: true, ok: true, superseded: true };
     await setMetaValue(env, "source_keepalive_last_success_at", nowIso());
     await setMetaValue(env, "source_keepalive_last_error", "");
     await setMetaValue(env, "source_browser_manual_required_at", "");
@@ -1049,7 +1063,12 @@ async function runGroupJob(env, groups) {
       results.push({ group_id: item?.group_id, error: message });
     }
   }
-  await saveSourceStorageState(env, scientia.storageState());
+  const saved = await saveSourceStorageState(env, scientia.storageState());
+  if (!saved) {
+    // The session has been replaced while this queue job was running.
+    // Never overwrite new cookie state nor flag the new session as expired.
+    throw new Error("source-session-superseded");
+  }
   if (fatal) {
     await setMetaValue(env, "source_session_error", String(fatal.message || fatal));
     throw fatal;
@@ -1065,11 +1084,14 @@ async function runCatalogJob(env) {
   try {
     const payload = await scientia.scrapeCatalog();
     const summary = await saveCatalogPayload(env, payload);
-    await saveSourceStorageState(env, scientia.storageState());
+    if (!(await saveSourceStorageState(env, scientia.storageState()))) throw new Error("source-session-superseded");
     return summary;
   } catch (err) {
-    try { await saveSourceStorageState(env, scientia.storageState()); } catch {}
     const message = String(err?.message || err);
+    if (message === "source-session-superseded") throw err;
+    let saved = false;
+    try { saved = await saveSourceStorageState(env, scientia.storageState()); } catch {}
+    if (!saved) throw new Error("source-session-superseded");
     if (/source-session/i.test(message)) await setMetaValue(env, "source_session_error", message);
     throw err;
   }
@@ -1263,6 +1285,10 @@ export default {
         } else if (/source-session-decryption|source-session-not-configured|source-session-key|source-session-invalid-json/i.test(messageText)) {
           try { await setMetaValue(env, "source_session_error", messageText); } catch (metaErr) { console.error("source session meta", metaErr); }
           message.retry({ delaySeconds: 300 });
+        } else if (/source-session-superseded/i.test(messageText)) {
+          // An operator or another worker supplied a newer session. Retry
+          // quickly against that latest state without flagging MFA expiry.
+          message.retry({ delaySeconds: 5 });
         } else if (/timetable-group-mismatch|unstable-timetable-source/i.test(messageText)) {
           message.retry({ delaySeconds: 10 });
         } else {
