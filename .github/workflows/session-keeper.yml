@@ -28,7 +28,23 @@ jobs:
       SESSION_CIPHER_KEY_B64: ${{ secrets.SESSION_CIPHER_KEY_B64 }}
 
     steps:
+      - name: Detect active approved delegated timetable source
+        id: delegated
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(curl --fail --silent --show-error --max-time 15 "$CLOUD_API_URL/api/entraid/status" 2>/dev/null | jq -r '.mode // ""' 2>/dev/null || true)"
+          health="$(curl --fail --silent --show-error --max-time 15 "$CLOUD_API_URL/health" 2>/dev/null | jq -r '.status // ""' 2>/dev/null || true)"
+          if [ "$status" = "delegated-session-present" ] && [ "$health" = "ok" ]; then
+            echo "Delegated source is already healthy on Cloudflare; no legacy browser-cookie keepalive needed."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Legacy cookie fallback may be needed; continuing usual session maintenance."
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check required secrets
+        if: steps.delegated.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -40,9 +56,11 @@ jobs:
           done
 
       - name: Checkout
+        if: steps.delegated.outputs.skip != 'true'
         uses: actions/checkout@v6
 
       - name: Set up Python
+        if: steps.delegated.outputs.skip != 'true'
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -50,12 +68,14 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Cache Playwright browser
+        if: steps.delegated.outputs.skip != 'true'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-1.49.1
 
       - name: Install keepalive dependencies
+        if: steps.delegated.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -63,6 +83,7 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Renew TUS/Microsoft session silently
+        if: steps.delegated.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail
