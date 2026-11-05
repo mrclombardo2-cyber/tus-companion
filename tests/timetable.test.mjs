@@ -196,3 +196,32 @@ test("interactive browser login prints redacted stages and prevents gateway clic
   const openStudentSet = source.split("def _open_student_set_by_name")[1].split("def _try_silent_reauth")[0];
   assert.doesNotMatch(openStudentSet, /with page\.expect_navigation\(/);
 });
+
+test("cloud session updates cannot overwrite a newer authentication state", () => {
+  const worker = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  const load = worker.split("async function loadSourceStorageState(env)")[1].split("async function browserPageReady")[0];
+  assert.match(load, /SELECT ciphertext,nonce,updated_at FROM source_session/);
+  assert.match(load, /__tusSourceRevision/);
+  assert.match(load, /UPDATE source_session SET ciphertext=\?,nonce=\?,updated_at=\? WHERE id=1 AND updated_at=\?/);
+  assert.match(load, /if \(!saved\.meta\?\.changes\) return false/);
+  assert.match(load, /delete|__tusSourceRevision: _revision/);
+  const queue = worker.split("async function runGroupJob(env, groups)")[1].split("async function recordCycle")[0];
+  assert.match(queue, /source-session-superseded/);
+  assert.match(worker, /message\.retry\(\{ delaySeconds: 5 \}\)/);
+});
+
+test("source keepalive attempts continue while interactive browser recovery is throttled", () => {
+  const worker = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  const keepalive = worker.split("async function keepSourceSessionWarm(env)")[1].split("async function maybeRecoverSourceSession(env)")[0];
+  assert.match(keepalive, /await session\.ensureReady\(\)/);
+  assert.doesNotMatch(keepalive, /manualRequired && ageMs\(manualRequired\)/);
+  const browser = worker.split("async function maybeRecoverSourceSession(env)")[1].split("function pushChangeSummary")[0];
+  assert.match(browser, /SOURCE_MANUAL_RETRY_HOURS/);
+});
+
+test("health makes failed source and scheduler visible without relying on HTTP errors", () => {
+  const worker = readFileSync(new URL("../cloud/worker/src/index.js", import.meta.url), "utf8");
+  assert.match(worker, /status: degraded \? "degraded" : "ok"/);
+  assert.match(worker, /recovery_action:/);
+  assert.match(worker, /check-group-sync-queue/);
+});
