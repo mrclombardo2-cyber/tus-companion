@@ -10,7 +10,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.6.2';
+const CLIENT_VERSION='16.6.3';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -143,6 +143,7 @@ function formatTime(value){
 function formatRange(e){return `${formatTime(e.start)}–${formatTime(e.end)}`}
 function formatClockDate(iso){if(!iso)return '';const d=new Date(iso);return d.toLocaleTimeString([],{hour:'numeric',minute:'2-digit',hour12:state.prefs.timeFormat==='12'})}
 function formatDetected(iso){if(!iso)return '';return new Date(iso).toLocaleString([],{dateStyle:'medium',timeStyle:'short',hour12:state.prefs.timeFormat==='12'})}
+function formatStaleSync(iso){if(!iso)return '';const d=new Date(iso);if(Number.isNaN(d.getTime()))return '';const time=formatClockDate(iso);if(Date.now()-d.getTime()<6*3600_000)return time;return d.toLocaleDateString([],{day:'numeric',month:'short'})+' · '+time}
 function eventWeekday(e){if(e?.date){const d=new Date(`${e.date}T12:00:00`);if(!Number.isNaN(d.getTime()))return new Intl.DateTimeFormat('en-IE',{weekday:'long'}).format(d).toUpperCase()}if(e?.day)return String(e.day).toUpperCase();return ''}
 function isoDateOffset(days){const d=new Date();d.setDate(d.getDate()+days);const m=String(d.getMonth()+1).padStart(2,'0'),day=String(d.getDate()).padStart(2,'0');return `${d.getFullYear()}-${m}-${day}`}
 function nextClassContext(e){
@@ -174,7 +175,7 @@ function syncDisplay(){
   if(state.offline){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Offline${saved?` · saved ${saved}`:''}`}}
   if(state.usingCached){const saved=state.offlineSavedAt?formatClockDate(state.offlineSavedAt):'';return {updated:`Reconnecting${saved?` · saved ${saved}`:''}`}}
   const last=state.sync?.last_success_at,status=state.sync?.status;
-  if(staleSyncReason())return {updated:last?`Not updated · ${formatClockDate(last)}`:'Not updated'};
+  if(staleSyncReason())return {updated:last?`Not updated · ${formatStaleSync(last)}`:'Not updated'};
   if(last)return {updated:`Updated ${formatClockDate(last)}`};
   return {updated:status==='syncing'||status==='queued'||status==='error'?'Updating…':''};
 }

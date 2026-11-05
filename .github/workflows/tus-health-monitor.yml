@@ -39,7 +39,7 @@ jobs:
             last_epoch="$(date -u -d "$last_cycle" +%s 2>/dev/null || echo 0)"
             now_epoch="$(date -u +%s)"
             if [ -n "$manual" ]; then
-              reason='TUS/Microsoft requires interactive sign-in or MFA; run RECOVER-TUS-NOW.cmd on the authorized PC.'
+              reason='TUS/Microsoft requires interactive sign-in or MFA; run the portable TUS recovery launcher on an authorized Windows PC.'
             elif [ -n "$source_error" ]; then
               reason="Upstream TUS session failure: $source_error"
             elif [ "$last_epoch" -eq 0 ] || [ $((now_epoch-last_epoch)) -gt 900 ]; then
@@ -55,12 +55,16 @@ jobs:
 
           if [ -n "$reason" ]; then
             echo "::error::$reason"
-            issue_body="Timetable refresh requires investigation.\n\n**Observed problem:** $reason\n\n**Health endpoint:** $HEALTH_URL\n\n**Recovery:** First check Cloudflare scheduled/queue workers. If TUS/Microsoft needs MFA, run RECOVER-TUS-NOW.cmd on an authorized Windows PC, then verify that /health shows new catalogue and group sync timestamps. This is not resolved by clearing the browser cache.\n\nThis issue is managed automatically by the scheduled health monitor."
+            issue_body="Timetable refresh requires investigation.\n\n**Observed problem:** $reason\n\n**Health endpoint:** $HEALTH_URL\n\n**Windows recovery download:** https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/main/RECOVER-TUS-PORTABLE.cmd\n\n**Recovery:** First check Cloudflare scheduled/queue workers. If TUS/Microsoft needs MFA, download and run RECOVER-TUS-PORTABLE.cmd on an authorized Windows PC, then verify that /health shows new catalogue and group sync timestamps. This is not resolved by clearing the browser cache.\n\nThis issue is managed automatically by the scheduled health monitor."
             if [ -z "$number" ]; then
               printf '%b\n' "$issue_body" | gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body-file -
             elif [ "$issue_state" = 'CLOSED' ]; then
               gh issue reopen "$number" --repo "$GITHUB_REPOSITORY"
-              printf '%b\n' "$issue_body" | gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file -
+              printf '%b\n' "$issue_body" | gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file -
+            else
+              # Keep the single existing issue actionable as errors change.
+              # Edit the body rather than creating repetitive issue comments.
+              printf '%b\n' "$issue_body" | gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file -
             fi
             exit 1
           fi

@@ -571,3 +571,6 @@ button,a,[role="button"],input,select,textarea{touch-action:manipulation}
   .offline-banner{flex-direction:column}
   .offline-banner #retry-sync{width:100%}
 }
+
+/* Keep long last-verified dates legible on phones; no intrusive alert panel. */
+.header-status.error{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;overflow-wrap:normal}
