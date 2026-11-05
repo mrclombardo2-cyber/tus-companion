@@ -574,3 +574,10 @@ button,a,[role="button"],input,select,textarea{touch-action:manipulation}
 
 /* Keep long last-verified dates legible on phones; no intrusive alert panel. */
 .header-status.error{white-space:normal;overflow:visible;text-overflow:clip;line-height:1.35;overflow-wrap:normal}
+
+/* One unobtrusive route to the official authenticated timetable during outages. */
+.header-sync{display:flex;flex-direction:column;align-items:flex-end;gap:5px;min-width:0}
+.official-timetable-link{color:#75623b;font-size:11px;line-height:1.3;font-weight:650;text-decoration:underline;text-underline-offset:3px;text-align:right}
+.official-timetable-link:focus-visible{outline:2px solid #75623b;outline-offset:4px;border-radius:2px}
+.official-pending-link{display:inline-block;text-align:left;margin:-15px 0 22px}
+@media(max-width:520px){.header-sync{max-width:48vw}.official-timetable-link{font-size:11px}}
