@@ -164,6 +164,7 @@ test("long pending course labels stay inside the sync card",async({page})=>{
   await page.goto("/");
   const panel=page.locator(".sync-panel");
   await expect(panel).toBeVisible();
+  await expect(page.locator('.official-pending-link')).toHaveAttribute('href','https://myapps.microsoft.com/');
   const fits=await panel.evaluate(el=>el.scrollWidth<=el.clientWidth+1);
   expect(fits).toBeTruthy();
 });
