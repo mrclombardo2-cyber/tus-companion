@@ -786,12 +786,18 @@ async function maybeRecoverSourceSession(env) {
     return { attempted: false, recovered: false };
   }
 
+  const before = await env.DB.prepare("SELECT updated_at FROM source_session WHERE id=1").first();
   await setMetaValue(env, "source_browser_last_attempt_at", nowIso());
   try {
     await recoverSourceSessionWithBrowser(env);
     return { attempted: true, recovered: true };
   } catch (err) {
     const message = String(err?.message || err);
+    if (before?.updated_at && !(await sourceSessionRevisionMatches(env, before.updated_at))) {
+      // A concurrent refresh or operator upload superseded this attempt.
+      // Its old MFA result must not override the newer source-session state.
+      return { attempted: true, recovered: false, superseded: true };
+    }
     console.error("browser source recovery", message);
     await setMetaValue(env, "source_browser_last_error", message);
     if (/browser-recovery-login-required/i.test(message)) {
