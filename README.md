@@ -81,6 +81,16 @@ Il programma indica adesso solo la **fase dell'accesso** (es. `TUS landing page`
 - `TUS Student Information`: il programma tenta di aprire da solo **Student Set - by Name**.
 - Se il messaggio finale è `TUS login not verified`, fornisci solo le righe che iniziano con `[TUS login]` e, se necessario, uno screenshot della pagina **senza password, codici o token**. Il programma non tenta di aggirare MFA.
 
+## Accesso delegato da iPhone (integrazione protetta, in attesa di autorizzazione TUS)
+
+È stata predisposta l'integrazione opzionale Microsoft Entra Authorization Code + PKCE che, **solo se autorizzata dalla TUS per la risorsa Timetables/Scientia**, permette al titolare della sessione sorgente di collegare Cloudflare direttamente dal telefono. I permessi non possono essere inventati né sostituiti con un token Microsoft Graph: TUS deve registrare/approvare il client, consentire l'accesso delegato alla risorsa e confermare che l'estrazione automatizzata è ammessa.
+
+- **Stato configurazione** (senza segreti): https://tus-companion.tusathlone.workers.dev/api/entraid/status
+- **Avvio autenticazione da Safari** (funziona solo dopo autorizzazione/configurazione TUS): https://tus-companion.tusathlone.workers.dev/api/entraid/connect
+- **Prerequisiti e testo da inviare al servizio IT TUS**: [docs/ENTRA-MOBILE-DELEGATION.md](docs/ENTRA-MOBILE-DELEGATION.md)
+
+Non caricare password universitarie, token o codici MFA in GitHub. In assenza della configurazione approvata la funzionalità è disattivata e rimane il collegamento all'orario ufficiale. Non è stato verificato che l'attuale servizio Scientia accetti access token delegati: una volta configurata l'applicazione, il callback verifica **l'effettivo accesso al timetable** prima di dichiarare attivo il collegamento.
+
 ## Consultazione immediata da iPhone o Android
 
 Quando il collegamento tra Cloudflare e TUS è scaduto, l'app mostra un discreto link **Official timetable** vicino alla data dell'ultimo aggiornamento; lo stesso link appare anche durante la prima sincronizzazione. Il collegamento apre il portale ufficiale [Microsoft My Apps](https://myapps.microsoft.com/), da cui lo studente accede all'app Timetables 2627 con il proprio account universitario e l'eventuale MFA. Non raccogliere credenziali nell'app TUS Companion.
