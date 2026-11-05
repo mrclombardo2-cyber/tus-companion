@@ -10,7 +10,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.6.4';
+const CLIENT_VERSION='16.6.5';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -200,7 +200,8 @@ function syncCopy(){
 function renderPending(){
   const m=syncCopy(),group=state.selection?.groupLabel||state.selection?.group||'';
   const attempt=state.sync?.last_attempt_at?`Last attempt ${formatClockDate(state.sync.last_attempt_at)}`:'Connecting…';
-  APP.innerHTML=`<main class="app pending-page"><header><div><p class="kicker">TUS ATHLONE</p><h1>Syncing your timetable</h1></div></header><a class="official-timetable-link official-pending-link" href="https://myapps.microsoft.com/" target="_blank" rel="noopener noreferrer">Check official TUS timetable ↗</a><section class="sync-panel ${m.kind}"><div class="sync-icon"><span></span></div><div class="sync-content"><p class="sync-eyebrow">${esc(group)}</p><h2>${esc(m.title)}</h2><p>${esc(m.body)}</p><div class="sync-meta">${esc(attempt)}</div></div></section><button id="change" class="ghost">Change course</button></main>${renderOverlays()}`;
+  const reconnect=state.meta?.delegated_login_enabled?'<a class="official-timetable-link official-pending-link" href="/api/entraid/connect">Reconnect automatic updates with Microsoft ↗</a>':'';
+  APP.innerHTML=`<main class="app pending-page"><header><div><p class="kicker">TUS ATHLONE</p><h1>Syncing your timetable</h1></div></header>${reconnect}<a class="official-timetable-link official-pending-link" href="https://myapps.microsoft.com/" target="_blank" rel="noopener noreferrer">Check official TUS timetable ↗</a><section class="sync-panel ${m.kind}"><div class="sync-icon"><span></span></div><div class="sync-content"><p class="sync-eyebrow">${esc(group)}</p><h2>${esc(m.title)}</h2><p>${esc(m.body)}</p><div class="sync-meta">${esc(attempt)}</div></div></section><button id="change" class="ghost">Change course</button></main>${renderOverlays()}`;
   bindCommon();
 }
 function render(){
@@ -213,7 +214,9 @@ function render(){
   const cacheBanner=(state.offline||state.usingCached)?`<div class="offline-banner" role="status"><div class="offline-copy"><b>${state.offline?'Offline mode':'Reconnecting'}</b><span>${state.offlineSavedAt?`Showing data saved ${esc(formatDetected(state.offlineSavedAt))}.`:'Showing the last timetable saved on this device.'} ${state.offline?'Changes will refresh automatically when the connection returns.':'Automatic retries are running now.'}</span></div>${state.offline?'':'<button id="retry-sync" class="small-ghost" type="button">Retry now</button>'}</div>`:'';
   const freshnessBanner=cacheBanner;
   const officialLink=(staleReason||state.offline||state.usingCached)?'<a class="official-timetable-link" href="https://myapps.microsoft.com/" target="_blank" rel="noopener noreferrer">Official timetable ↗</a>':'';
-  APP.innerHTML=`<main class="app ${state.tab==='week'?'week-app':''}"><header><div><p class="kicker">TUS ATHLONE</p><h1>${title}</h1></div><div class="header-sync"><div class="header-status ${staleReason?'error':''}">${esc(syncUi.updated)}</div>${officialLink}</div></header>${freshnessBanner}${body}${nav()}</main>${renderOverlays()}${state.toast?`<div class="toast" role="status">${esc(state.toast)}</div>`:''}`;
+  const delegateLink=staleReason&&state.meta?.delegated_login_enabled?'<a class="official-timetable-link" href="/api/entraid/connect">Reconnect updates ↗</a>':'';
+
+  APP.innerHTML=`<main class="app ${state.tab==='week'?'week-app':''}"><header><div><p class="kicker">TUS ATHLONE</p><h1>${title}</h1></div><div class="header-sync"><div class="header-status ${staleReason?'error':''}">${esc(syncUi.updated)}</div>${delegateLink}${officialLink}</div></header>${freshnessBanner}${body}${nav()}</main>${renderOverlays()}${state.toast?`<div class="toast" role="status">${esc(state.toast)}</div>`:''}`;
   bindCommon();
 }
 
