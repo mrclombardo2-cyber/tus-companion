@@ -216,9 +216,10 @@ async function readText(response) {
 }
 
 export class ScientiaSession {
-  constructor(storageState, fetchImpl = fetch) {
+  constructor(storageState, fetchImpl = fetch, delegatedAccessToken = null) {
     this.cookies = new CookieJar(storageState);
     this.fetchImpl = fetchImpl;
+    this.delegatedAccessToken = delegatedAccessToken;
   }
 
   async request(url, init = {}, redirects = 0) {
@@ -226,6 +227,12 @@ export class ScientiaSession {
     const headers = new Headers(init.headers || {});
     const cookie = this.cookies.header(url);
     if (cookie) headers.set("cookie", cookie);
+    // An Entra Application Proxy resource can optionally accept a *delegated*
+    // access token. Never forward this token to Microsoft login redirects or
+    // any external hostname. Legacy cookie-only source sessions still work.
+    if (this.delegatedAccessToken && new URL(url).hostname.toLowerCase() === TUS_HOST) {
+      headers.set("authorization", "Bearer " + this.delegatedAccessToken);
+    }
     headers.set("user-agent", "Mozilla/5.0 (compatible; TUS-Companion/1.8; +https://workers.dev)");
     headers.set("accept", headers.get("accept") || "text/html,application/xhtml+xml");
     const fetcher = this.fetchImpl;
