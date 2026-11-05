@@ -748,6 +748,13 @@ async function keepSourceSessionWarm(env) {
   try { bearer = await delegatedAccessToken(env); }
   catch (err) { console.error("entra delegated refresh", String(err?.message || err)); }
   if (bearer) {
+    const lastAttempt = await getMetaValue(env, "source_keepalive_last_attempt_at");
+    const lastSuccess = await getMetaValue(env, "source_keepalive_last_success_at");
+    const sourceError = await getMetaValue(env, "source_session_error");
+    if (lastAttempt && lastSuccess && !sourceError && ageMs(lastAttempt) < SOURCE_HTTP_KEEPALIVE_MINUTES * 60_000) {
+      return { attempted: false, ok: true, mode: "approved-entra-delegation" };
+    }
+    await setMetaValue(env, "source_keepalive_last_attempt_at", nowIso());
     try {
       const session = new ScientiaSession({cookies:[],origins:[]}, fetch, bearer);
       await session.ensureReady();
