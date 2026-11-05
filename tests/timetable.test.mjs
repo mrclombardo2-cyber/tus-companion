@@ -225,3 +225,28 @@ test("health makes failed source and scheduler visible without relying on HTTP e
   assert.match(worker, /recovery_action:/);
   assert.match(worker, /check-group-sync-queue/);
 });
+
+test("Microsoft delegated login is optional and never uses unapproved Microsoft Graph tokens", () => {
+  const auth=readFileSync(new URL("../cloud/worker/src/entra-delegation.js",import.meta.url),"utf8");
+  const transport=readFileSync(new URL("../cloud/worker/src/scientia.js",import.meta.url),"utf8");
+  const worker=readFileSync(new URL("../cloud/worker/src/index.js",import.meta.url),"utf8");
+  assert.match(auth,/TUS_ENTRA_TENANT_ID/);
+  assert.match(auth,/TUS_ENTRA_OPERATOR_OID/);
+  assert.match(auth,/TUS_ENTRA_PROXY_SCOPE/);
+  assert.match(auth,/user_impersonation/);
+  assert.match(auth,/!\/graph\\\.microsoft\\\.com\/i\.test\(scope\)/);
+  assert.match(auth,/code_challenge_method:"S256"/);
+  assert.match(auth,/HttpOnly; Secure; SameSite=Lax/);
+  assert.match(auth,/jwtVerify\(data\.id_token/);
+  assert.match(auth,/payload\.oid/);
+  assert.match(auth,/nonce/);
+  assert.match(auth,/additionalData:AAD/);
+  assert.match(auth,/refresh_token/);
+  assert.match(auth,/probe\.ensureReady\(\)/);
+  assert.match(auth,/WHERE id=1 AND revision=\?/);
+  assert.match(transport,/new URL\(url\)\.hostname\.toLowerCase\(\) === TUS_HOST/);
+  assert.match(worker,/delegationReadiness\(env\)\.configured/);
+  assert.match(worker,/\/api\/entraid\/connect/);
+  assert.match(worker,/\/api\/entraid\/callback/);
+  assert.match(worker,/new ScientiaSession\(\{cookies:\[\],origins:\[\]\}, fetch, bearer\)/);
+});
