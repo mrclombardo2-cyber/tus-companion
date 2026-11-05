@@ -81,6 +81,12 @@ Il programma indica adesso solo la **fase dell'accesso** (es. `TUS landing page`
 - `TUS Student Information`: il programma tenta di aprire da solo **Student Set - by Name**.
 - Se il messaggio finale è `TUS login not verified`, fornisci solo le righe che iniziano con `[TUS login]` e, se necessario, uno screenshot della pagina **senza password, codici o token**. Il programma non tenta di aggirare MFA.
 
+## Consultazione immediata da iPhone o Android
+
+Quando il collegamento tra Cloudflare e TUS è scaduto, l'app mostra un discreto link **Official timetable** vicino alla data dell'ultimo aggiornamento; lo stesso link appare anche durante la prima sincronizzazione. Il collegamento apre il portale ufficiale [Microsoft My Apps](https://myapps.microsoft.com/), da cui lo studente accede all'app Timetables 2627 con il proprio account universitario e l'eventuale MFA. Non raccogliere credenziali nell'app TUS Companion.
+
+**Importante:** l'accesso in Safari/Chrome sul telefono permette di consultare il calendario ufficiale, ma **non** trasferisce i cookie protetti del browser alla sessione Cloudflare; per ripristinare il recupero automatico centralizzato occorre che i tentativi di rinnovo lato server riescano oppure una sessione server ri-autorizzata con un flusso ufficiale supportato. Una password da sola non garantisce la disponibilità quando Microsoft impone MFA.
+
 ## Ripristino TUS quando hai soltanto GitHub
 
 Su un PC Windows, scarica e avvia [RECOVER-TUS-PORTABLE.cmd](https://github.com/mrclombardo2-cyber/tus-companion/raw/refs/heads/main/RECOVER-TUS-PORTABLE.cmd). Non occorrono una cartella locale preesistente, `.cloud.local.json` o conoscere le credenziali Cloudflare.
