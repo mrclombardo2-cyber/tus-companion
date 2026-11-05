@@ -677,7 +677,7 @@ async function recoverSourceSessionWithBrowser(env) {
   let context;
   try {
     context = await browser.newContext({
-      storageState: storage,
+      storageState: { cookies: storage.cookies, origins: storage.origins || [] },
       viewport: { width: 1440, height: 1000 },
       userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/154 Safari/537.36",
     });
