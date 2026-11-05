@@ -89,6 +89,15 @@ Il file scarica automaticamente la versione aggiornata del progetto, installa Gi
 
 **Non** incollare password o sessioni nei workflow input, commit, issue, messaggi, log o link. Se la password universitaria è stata condivisa in chat, va cambiata. Nessun sistema può aggirare una richiesta Microsoft di verifica interattiva. L'app, il cron Cloudflare e il controllo dello stato continuano a funzionare da remoto quando il PC è spento, nei limiti delle sessioni rilasciate dal fornitore.
 
+
+### Resilienza della sessione sorgente (v16.6.3)
+
+- Cloudflare continua a provare periodicamente il rinnovo HTTP dei cookie anche se una precedente sessione Microsoft ha richiesto un intervento manuale. I nuovi tentativi di browser remoto restano limitati per evitare ricicli inutili.
+- Tutte le scritture della sessione cifrata in D1 sono **condizionate alla versione letta**: un job della coda iniziato prima non può sovrascrivere una sessione TUS più recente, inclusa una sessione rinnovata dal programma Windows.
+- `/health` distingue `ok` e `degraded` e fornisce `recovery_action`. Il monitor GitHub aggiorna la segnalazione già aperta anziché lasciare informazioni non aggiornate.
+- Nell'app, `Not updated` rimane discreto, ma con **giorno e ora** quando l'ultimo aggiornamento riuscito risale a più di sei ore prima.
+- **Limite esterno:** TUS/Microsoft può revocare i cookie, imporre MFA o modificare il portale. In quel caso serve rinnovare la sessione sul portale ufficiale tramite `RECOVER-TUS-PORTABLE.cmd` sul PC autorizzato; nessun tentativo di login aggira la MFA.
+
 ## Freshness e monitoraggio automatico (v16.6.2)
 
 - L'ultima ora visualizzata come `Updated` è l'**ultima sincronizzazione riuscita**, non l'ora corrente.
