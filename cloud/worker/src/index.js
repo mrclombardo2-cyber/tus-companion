@@ -3,10 +3,11 @@ import { launch } from "@cloudflare/playwright";
 import { ScientiaSession, TUS_BASE_URL } from "./scientia.js";
 import { parseTextSpreadsheet, diffSnapshots, snapshotContentHash, enrichChanges, compactWeekSnapshot, validateSnapshotForGroup, suppressTransientReversals } from "./timetable.js";
 import { buildCalendar } from "./calendar.js";
+import { delegationReadiness, delegatedAccessToken, delegatedAuthStatus, startDelegatedSignIn, completeDelegatedSignIn } from "./entra-delegation.js";
 
 const APP_VERSION = "1.12.0-cloud";
 const LEGAL_VERSION = "2026-09-30";
-const FRONTEND_VERSION = "16.6.4";
+const FRONTEND_VERSION = "16.6.5";
 const INTEREST_TTL_HOURS = 6;
 const INTEREST_TOUCH_MINUTES = 15;
 const CATALOG_REFRESH_HOURS = 24;
@@ -729,7 +730,43 @@ async function recoverSourceSessionWithBrowser(env) {
   }
 }
 
+async function openTimetableSource(env) {
+  // Prefer the officially approved delegated resource token when available.
+  // A missing/invalid grant falls back to the previous encrypted TUS cookies.
+  let bearer = null;
+  try { bearer = await delegatedAccessToken(env); }
+  catch (err) { console.error("entra delegated token", String(err?.message || err)); }
+  if (bearer) return { scientia: new ScientiaSession({cookies:[],origins:[]}, fetch, bearer), delegated: true };
+  const storage = await loadSourceStorageState(env);
+  return { scientia: new ScientiaSession(storage), delegated: false };
+}
+
 async function keepSourceSessionWarm(env) {
+  // If Microsoft/TUS has approved delegated App Proxy tokens, test the
+  // resource itself instead of attempting to renew unrelated legacy cookies.
+  let bearer = null;
+  try { bearer = await delegatedAccessToken(env); }
+  catch (err) { console.error("entra delegated refresh", String(err?.message || err)); }
+  if (bearer) {
+    const lastAttempt = await getMetaValue(env, "source_keepalive_last_attempt_at");
+    const lastSuccess = await getMetaValue(env, "source_keepalive_last_success_at");
+    const sourceError = await getMetaValue(env, "source_session_error");
+    if (lastAttempt && lastSuccess && !sourceError && ageMs(lastAttempt) < SOURCE_HTTP_KEEPALIVE_MINUTES * 60_000) {
+      return { attempted: false, ok: true, mode: "approved-entra-delegation" };
+    }
+    await setMetaValue(env, "source_keepalive_last_attempt_at", nowIso());
+    try {
+      const session = new ScientiaSession({cookies:[],origins:[]}, fetch, bearer);
+      await session.ensureReady();
+      await setMetaValue(env, "source_session_error", "");
+      await setMetaValue(env, "source_browser_manual_required_at", "");
+      await setMetaValue(env, "source_keepalive_last_success_at", nowIso());
+      return { attempted: true, ok: true, mode: "approved-entra-delegation" };
+    } catch (err) {
+      console.error("entra delegated source", String(err?.message || err));
+      // Legacy cookie renewal may still be functional during Entra outages.
+    }
+  }
   // Keep trying the low-cost HTTP cookie renewal. A previous interactive/MFA
   // failure throttles costly browser launches, not safe silent HTTP attempts.
   const lastAttempt = await getMetaValue(env, "source_keepalive_last_attempt_at");
@@ -1075,8 +1112,7 @@ async function syncOneGroup(env, scientia, item) {
   }
 }
 async function runGroupJob(env, groups) {
-  const storage = await loadSourceStorageState(env);
-  const scientia = new ScientiaSession(storage);
+  const { scientia, delegated } = await openTimetableSource(env);
   const results = [];
   let fatal = null;
   for (const item of Array.isArray(groups) ? groups : []) {
@@ -1084,11 +1120,12 @@ async function runGroupJob(env, groups) {
     catch (err) {
       const message = String(err?.message || err);
       console.error("group sync", item?.group_id, message);
+      if (delegated && /source-session-expired/i.test(message)) { fatal = new Error("delegated-token-rejected"); break; }
       if (/source-session/i.test(message)) { fatal = err; break; }
       results.push({ group_id: item?.group_id, error: message });
     }
   }
-  const saved = await saveSourceStorageState(env, scientia.storageState());
+  const saved = delegated || await saveSourceStorageState(env, scientia.storageState());
   if (!saved) {
     // The session has been replaced while this queue job was running.
     // Never overwrite new cookie state nor flag the new session as expired.
@@ -1104,16 +1141,20 @@ async function runGroupJob(env, groups) {
 }
 
 async function runCatalogJob(env) {
-  const storage = await loadSourceStorageState(env);
-  const scientia = new ScientiaSession(storage);
+  const { scientia, delegated } = await openTimetableSource(env);
   try {
     const payload = await scientia.scrapeCatalog();
     const summary = await saveCatalogPayload(env, payload);
-    if (!(await saveSourceStorageState(env, scientia.storageState()))) throw new Error("source-session-superseded");
+    if (!delegated && !(await saveSourceStorageState(env, scientia.storageState()))) throw new Error("source-session-superseded");
+    await setMetaValue(env, "source_session_error", "");
     return summary;
   } catch (err) {
     const message = String(err?.message || err);
     if (message === "source-session-superseded") throw err;
+    if (delegated) {
+      if (/source-session/i.test(message)) await setMetaValue(env, "source_session_error", "delegated-token-rejected");
+      throw err;
+    }
     let saved = false;
     try { saved = await saveSourceStorageState(env, scientia.storageState()); } catch {}
     if (!saved) throw new Error("source-session-superseded");
@@ -1204,7 +1245,16 @@ function mapResponse(roomCode) {
 async function route(request, env) {
   const url = new URL(request.url), path = url.pathname;
   if (path === "/health" && request.method === "GET") return health(env);
-  if (path === "/api/meta" && request.method === "GET") return json({ version: APP_VERSION, frontend_version: FRONTEND_VERSION, operator_name: env.OPERATOR_NAME || "Independent TUS Companion project", contact_email: env.CONTACT_EMAIL || "", legal_version: LEGAL_VERSION });
+  if (path === "/api/meta" && request.method === "GET") return json({ version: APP_VERSION, frontend_version: FRONTEND_VERSION, operator_name: env.OPERATOR_NAME || "Independent TUS Companion project", contact_email: env.CONTACT_EMAIL || "", legal_version: LEGAL_VERSION, delegated_login_enabled: delegationReadiness(env).configured });
+  if (path === "/api/entraid/status" && request.method === "GET") return json(await delegatedAuthStatus(env));
+  if (path === "/api/entraid/connect" && request.method === "GET") {
+    if (rateLimitExceeded(request, "entra-connect", 10)) return apiError(429, "too-many-sign-in-attempts");
+    return startDelegatedSignIn(env);
+  }
+  if (path === "/api/entraid/callback" && request.method === "GET") {
+    if (rateLimitExceeded(request, "entra-callback", 20)) return apiError(429, "too-many-sign-in-attempts");
+    return completeDelegatedSignIn(request, env);
+  }
   if (path === "/api/catalog" && request.method === "GET") return catalog(env);
   if (path === "/api/watch" && request.method === "POST") {
     if (rateLimitExceeded(request, "watch", 60)) return json({ detail: "rate-limit" }, 429, { "retry-after": "60" });
