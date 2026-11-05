@@ -368,3 +368,25 @@ test('stale cloud data without an explicit source error shows an update delay',a
   await expect(page.locator('.stale-banner')).toHaveCount(0);
   await expect(page.locator('a.official-timetable-link')).toHaveAttribute('href','https://myapps.microsoft.com/');
 });
+
+test("delegated reconnect appears only after university-enabled server configuration",async({page})=>{
+  const snap=snapshot(),old=new Date(Date.now()-9*3600*1000).toISOString();
+  const sync={group_id:"g1",status:"error",error:"source-session-unavailable",last_success_at:old};
+  await selectStoredCourse(page);
+  await page.addInitScript(({snap,sync})=>localStorage.setItem("tus-companion-offline-v1",JSON.stringify({group_id:"g1",saved_at:sync.last_success_at,snapshot:snap,sync,changes:[]})),{snap,sync});
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.5",delegated_login_enabled:true});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/");
+  await expect(page.locator('a[href="/api/entraid/connect"]')).toBeVisible();
+  await expect(page.locator('a[href="https://myapps.microsoft.com/"]')).toBeVisible();
+  await expect(page.locator('.stale-banner')).toHaveCount(0);
+});
