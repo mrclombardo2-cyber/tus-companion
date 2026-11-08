@@ -250,3 +250,16 @@ test("Microsoft delegated login is optional and never uses unapproved Microsoft 
   assert.match(worker,/\/api\/entraid\/callback/);
   assert.match(worker,/new ScientiaSession\(\{cookies:\[\],origins:\[\]\}, fetch, bearer\)/);
 });
+
+test("portable PowerShell recovery enumerates workflow runs before parsing timestamps", () => {
+  const script = readFileSync(new URL("../RECOVER-TUS-PORTABLE.ps1", import.meta.url), "utf8");
+  // Windows PowerShell ConvertFrom-Json may expose JSON arrays as one Object[].
+  // Do not cast a projected property array to [DateTime] inside Where-Object.
+  assert.doesNotMatch(script, /\[DateTime\]\$_\.createdAt/);
+  assert.match(script, /ConvertFrom-Json -InputObject/);
+  assert.match(script, /foreach \(\$RunGroup in @\(\$ParsedRuns\)\)/);
+  assert.match(script, /foreach \(\$Run in @\(\$RunGroup\)\)/);
+  assert.match(script, /\[DateTimeOffset\]::TryParse\(\[string\]\$Run\.createdAt, \[ref\]\$CreatedAt\)/);
+  assert.match(script, /& \$GhExe run watch \$RunId --repo \$Repository --exit-status/);
+  assert.match(script, /& \$GhExe secret delete TUS_RECOVERY_STATE_B64 --repo \$Repository/);
+});
