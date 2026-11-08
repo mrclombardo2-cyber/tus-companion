@@ -115,12 +115,31 @@ try {
     & $GhExe workflow run $Workflow --repo $Repository --ref main
     if ($LASTEXITCODE -ne 0) { throw 'GitHub could not start the recovery workflow.' }
     $RunId = ''
-    for ($Attempt = 0; $Attempt -lt 25 -and -not $RunId; $Attempt++) {
+    # Windows PowerShell 5.1 can treat JSON arrays as one Object[] pipeline item.
+    # Iterate every record explicitly rather than casting an array to [DateTime].
+    for ($Attempt = 0; $Attempt -lt 50 -and -not $RunId; $Attempt++) {
         Start-Sleep -Seconds 3
-        $RunsJson = & $GhExe run list --repo $Repository --workflow $Workflow --event workflow_dispatch --limit 10 --json databaseId,createdAt,status
-        if ($LASTEXITCODE -ne 0) { continue }
-        $Recent = $RunsJson | ConvertFrom-Json | Where-Object { [DateTime]$_.createdAt -ge $EarliestRun } | Sort-Object createdAt -Descending | Select-Object -First 1
-        if ($Recent) { $RunId = [string]$Recent.databaseId }
+        $RunLines = @(& $GhExe run list --repo $Repository --workflow $Workflow --event workflow_dispatch --limit 15 --json databaseId,createdAt,status)
+        if ($LASTEXITCODE -ne 0 -or -not $RunLines.Count) { continue }
+        try {
+            $ParsedRuns = ConvertFrom-Json -InputObject ($RunLines -join "`n") -ErrorAction Stop
+        } catch {
+            Write-Host 'Waiting for GitHub to return a valid workflow list...' -ForegroundColor DarkGray
+            continue
+        }
+        $NewestTime = [DateTimeOffset]::MinValue
+        foreach ($RunGroup in @($ParsedRuns)) {
+            foreach ($Run in @($RunGroup)) {
+                if ($null -eq $Run) { continue }
+                $CreatedAt = [DateTimeOffset]::MinValue
+                if (-not [DateTimeOffset]::TryParse([string]$Run.createdAt, [ref]$CreatedAt)) { continue }
+                if ($CreatedAt.UtcDateTime -lt $EarliestRun -or $CreatedAt -lt $NewestTime) { continue }
+                $CandidateId = [string]$Run.databaseId
+                if ($CandidateId -notmatch '^[0-9]+$') { continue }
+                $RunId = $CandidateId
+                $NewestTime = $CreatedAt
+            }
+        }
     }
     if (-not $RunId) { throw 'Run started, but could not be located. Open GitHub Actions.' }
     Write-Host "Tracking: https://github.com/$Repository/actions/runs/$RunId"
