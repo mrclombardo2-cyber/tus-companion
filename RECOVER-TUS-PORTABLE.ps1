@@ -115,12 +115,61 @@ try {
     & $GhExe workflow run $Workflow --repo $Repository --ref main
     if ($LASTEXITCODE -ne 0) { throw 'GitHub could not start the recovery workflow.' }
     $RunId = ''
-    for ($Attempt = 0; $Attempt -lt 25 -and -not $RunId; $Attempt++) {
+    # On Windows PowerShell 5.1 ConvertFrom-Json may return a single Object[]
+    # containing all workflow runs. Projecting .createdAt from that array
+    # yields another Object[] that cannot be cast to [DateTime].
+    # Parse the entire JSON payload, then enumerate records explicitly.
+    for ($Attempt = 0; $Attempt -lt 50 -and -not $RunId; $Attempt++) {
         Start-Sleep -Seconds 3
-        $RunsJson = & $GhExe run list --repo $Repository --workflow $Workflow --event workflow_dispatch --limit 10 --json databaseId,createdAt,status
-        if ($LASTEXITCODE -ne 0) { continue }
-        $Recent = $RunsJson | ConvertFrom-Json | Where-Object { [DateTime]$_.createdAt -ge $EarliestRun } | Sort-Object createdAt -Descending | Select-Object -First 1
-        if ($Recent) { $RunId = [string]$Recent.databaseId }
+        $RunLines = @(& $GhExe run list --repo $Repository --workflow $Workflow --event workflow_dispatch --limit 15 --json databaseId,createdAt,status)
+        if ($LASTEXITCODE -ne 0 -or -not $RunLines.Count) { continue }
+        try {
+            $ParsedRuns = ConvertFrom-Json -InputObject ($RunLines -join "`n") -ErrorAction Stop
+        } catch {
+            Write-Host 'Waiting for a valid GitHub workflow list...' -ForegroundColor DarkGray
+            continue
+        }
+        $NewestTime = [DateTimeOffset]::MinValue
+        foreach ($RunGroup in @($ParsedRuns)) {
+            # Nested iteration also handles the one-element Object[] case.
+            foreach ($Run in @($RunGroup)) {
+                if ($null -eq $Run) { continue }
+                $CreatedAt = [DateTimeOffset]::MinValue
+                $CreatedText = [string]$Run.createdAt
+                if (-not [DateTimeOffset]::TryParse($CreatedText, [ref]$CreatedAt)) { continue }
+                if ($CreatedAt.UtcDateTime -lt $EarliestRun) { continue }
+                if ($CreatedAt -lt $NewestTime) { continue }
+                $CandidateId = [string]$Run.databaseId
+                if ($CandidateId -notmatch '^[0-9]+
+    if (-not $RunId) { throw 'Run started, but could not be located. Open GitHub Actions.' }
+    Write-Host "Tracking: https://github.com/$Repository/actions/runs/$RunId"
+    & $GhExe run watch $RunId --repo $Repository --exit-status
+    if ($LASTEXITCODE -ne 0) { throw 'Source session was not verified. Check the linked GitHub Actions run.' }
+
+    Write-Host ''
+    Write-Host 'TUS SESSION RECONNECTED AND VERIFIED' -ForegroundColor Green
+    Write-Host 'Cloudflare accepted the session and confirmed fresh catalog data.' -ForegroundColor Green
+    Write-Host 'App: https://tus-companion.tusathlone.workers.dev/'
+} catch {
+    Write-Host ''
+    Write-Host "Recovery failed: $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "Check: https://github.com/$Repository/actions" -ForegroundColor Yellow
+    exit 1
+} finally {
+    if ($SecretCreated) {
+        Write-Host 'Removing temporary browser session secret from GitHub...'
+        & $GhExe secret delete TUS_RECOVERY_STATE_B64 --repo $Repository
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning 'Delete TUS_RECOVERY_STATE_B64 in repository Settings > Secrets and variables > Actions.'
+        }
+    }
+    if (Test-Path $Temp) { Remove-Item $Temp -Recurse -Force -ErrorAction SilentlyContinue }
+}
+) { continue }
+                $RunId = $CandidateId
+                $NewestTime = $CreatedAt
+            }
+        }
     }
     if (-not $RunId) { throw 'Run started, but could not be located. Open GitHub Actions.' }
     Write-Host "Tracking: https://github.com/$Repository/actions/runs/$RunId"
