@@ -97,6 +97,10 @@ Quando il collegamento tra Cloudflare e TUS è scaduto, l'app mostra un discreto
 
 **Importante:** l'accesso in Safari/Chrome sul telefono permette di consultare il calendario ufficiale, ma **non** trasferisce i cookie protetti del browser alla sessione Cloudflare; per ripristinare il recupero automatico centralizzato occorre che i tentativi di rinnovo lato server riescano oppure una sessione server ri-autorizzata con un flusso ufficiale supportato. Una password da sola non garantisce la disponibilità quando Microsoft impone MFA.
 
+### Problema PowerShell `System.Object[]` → `System.DateTime` (corretto)
+
+Se una precedente esecuzione del programma Windows terminava dopo `Running automatic session restoration on Cloudflare` con un errore di conversione `System.Object[]` in `System.DateTime`, il problema era nel controllo dell'elenco dei job di GitHub Actions, non necessariamente nell'accesso Microsoft. Il programma ora analizza ciascun job separatamente e usa `DateTimeOffset.TryParse`, quindi attende l'esito del job prima di cancellare la credenziale temporanea. È sufficiente rilanciare lo stesso file `RECOVER-TUS-PORTABLE.cmd`, che scarica lo script aggiornato da GitHub; il profilo locale di sessione e gli strumenti installati vengono riutilizzati. Un messaggio `TUS SESSION RECONNECTED AND VERIFIED` è valido solo dopo il completamento positivo del workflow e la verifica di un nuovo catalogo, mentre il refresh dei singoli orari va confermato separatamente.
+
 ## Ripristino TUS quando hai soltanto GitHub
 
 Su un PC Windows, scarica e avvia [RECOVER-TUS-PORTABLE.cmd](https://github.com/mrclombardo2-cyber/tus-companion/raw/refs/heads/main/RECOVER-TUS-PORTABLE.cmd). Non occorrono una cartella locale preesistente, `.cloud.local.json` o conoscere le credenziali Cloudflare.
