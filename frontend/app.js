@@ -410,7 +410,7 @@ function changeBadge(event){
 }
 function changeDetail(label,now,before){
   const earlier=before!=null&&before!==''?'<small>Before: '+esc(before)+'</small>':'';
-  return '<div class="change-detail"><span>'+esc(label)+'</span><strong>Now: '+esc(now||'Not specified')+'</strong>'+earlier+'</div>';
+  return '<div class="change-detail"><span>'+esc(label)+'</span><strong>Changed to: '+esc(now||'Not specified')+'</strong>'+earlier+'</div>';
 }
 function changeDetailHtml(change){
   const before=change.before||{},after=change.after||{};
