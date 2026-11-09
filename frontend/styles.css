@@ -581,3 +581,30 @@ button,a,[role="button"],input,select,textarea{touch-action:manipulation}
 .official-timetable-link:focus-visible{outline:2px solid #75623b;outline-offset:4px;border-radius:2px}
 .official-pending-link{display:inline-block;text-align:left;margin:-15px 0 22px}
 @media(max-width:520px){.header-sync{max-width:48vw}.official-timetable-link{font-size:11px}}
+
+
+/* v16.6.6 — clear, consolidated TUS timetable changes */
+.changes-list{display:grid;gap:14px;padding-bottom:20px}
+.changes-list .change{margin:0;padding:20px 22px;border-color:#e9e0cb;box-shadow:0 4px 18px #00000006}
+.change .change-type{font-size:11px;letter-spacing:.075em}
+.change .change-class-date{font-size:13px;font-weight:750;color:#625b4a;margin:10px 0 0}
+.change .change-detected{font-size:11px;color:#8c887f;margin:5px 0 0;line-height:1.4}
+.change-details{display:grid;gap:9px;margin-top:17px}
+.change-detail{background:#f7f5ef;border:1px solid #ece6d8;border-radius:12px;padding:12px 14px;display:grid;gap:5px;min-width:0}
+.change-detail>span{font-size:11px;color:#766c54;font-weight:800;letter-spacing:.015em}
+.change-detail>strong{font-size:16px;line-height:1.3;color:#272520;overflow-wrap:anywhere}
+.change-detail>small{font-size:12px;color:#77736c;line-height:1.35;overflow-wrap:anywhere}
+.change-explainer{font-size:11px!important;line-height:1.55;color:#7d786f;margin:13px 0 0!important}
+.change-week-link{border:0;background:transparent;padding:9px 0 1px;margin-top:11px;color:#7b6532;text-decoration:underline;text-underline-offset:3px;font-size:13px;font-weight:800;cursor:pointer}
+.change-week-link:focus-visible{outline:2px solid #9b8245;outline-offset:3px;border-radius:4px}
+.week-changed-tag,.today-change-badge{background:#fffdf6;color:#765d22;border:1px solid #d5be7f;border-radius:999px;display:inline-block;font-size:10px;font-style:normal;font-weight:850;line-height:1.15;padding:3px 7px;white-space:nowrap}
+.today-change-badge{font-size:9px;margin-left:2px}
+.week-event .week-changed-tag{align-self:flex-start;font-size:8px;padding:2px 5px;max-width:100%;text-overflow:ellipsis;overflow:hidden}
+.mobile-week-side .week-changed-tag{max-width:100%;font-size:9px;text-align:right;padding:3px 5px}
+.mobile-week-card .mobile-week-side{align-content:center;gap:7px}
+@media(max-width:520px){
+  .changes-list{gap:12px}
+  .changes-list .change{padding:19px 17px}
+  .change-detail{padding:11px 12px}
+  .change-detail>strong{font-size:15px}
+}
