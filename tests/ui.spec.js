@@ -21,7 +21,7 @@ test("internal gaps appear as subtle breaks on Today and mobile Week",async({pag
   await page.route("**/api/**",async route=>{
     const path=new URL(route.request().url()).pathname,json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.7",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/changes/g1")return json([]);
@@ -49,7 +49,7 @@ test("desktop Week marks only real internal timetable gaps",async({page})=>{
   await page.route("**/api/**",async route=>{
     const path=new URL(route.request().url()).pathname,json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.7",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/changes/g1")return json([]);
@@ -255,7 +255,7 @@ test("first open of a stale course waits for fresh data before showing the timet
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.7",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:new Date(Date.now()-6*60*60*1000).toISOString()}});
     if(path==="/api/timetable/g1"){
       timetableCalls++;
@@ -297,7 +297,7 @@ test("returning user sees cached timetable immediately and refreshes in backgrou
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.7",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:staleSync.last_success_at}});
     if(path==="/api/timetable/g1"){
       calls++;
@@ -378,7 +378,7 @@ test("delegated reconnect appears only after university-enabled server configura
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",delegated_login_enabled:true});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.7",delegated_login_enabled:true});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync});
     if(path==="/api/changes/g1")return json([]);
@@ -411,7 +411,7 @@ test("Business Law room and teaching-week changes appear as one clear card and l
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6"});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.7"});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/changes/g1")return json(changes);
@@ -426,8 +426,13 @@ test("Business Law room and teaching-week changes appear as one clear card and l
   await expect(page.locator(".change")).toContainText("Before: B11");
   await expect(page.locator(".change")).toContainText("Changed to: week 13");
   await expect(page.locator(".change")).toContainText("Before: weeks 4–15");
-  await expect(page.locator(".change .change-class-date")).toContainText("Class:");
-  await expect(page.locator(".change .change-detected")).toContainText("Detected");
+  await expect(page.locator(".change-week")).toContainText("TUS timetable week 13");
+  await expect(page.locator(".change .change-class-date")).toContainText("Wednesday");
+  await expect(page.locator(".change .change-detected")).toContainText("Monday");
+  await expect(page.locator(".change .change-detected")).toContainText("9 Nov 2026");
+  await expect(page.locator(".change .change-detected")).toContainText("09:19");
+  await expect(page.locator(".change .change-detected")).toContainText("Irish time");
+  await expect(page.locator(".change .change-detected")).toContainText("TUS may have edited it earlier");
   await page.getByRole("button",{name:"View in Week"}).click();
   await expect(page.locator(".mobile-week")).toBeVisible();
   await expect(page.locator(".mobile-day.selected")).toHaveAttribute("data-week-date",updated.date);
@@ -446,7 +451,7 @@ test("Week never applies an old change over a newer verified TUS snapshot",async
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6"});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.7"});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/changes/g1")return json(changes);
@@ -477,7 +482,7 @@ test("desktop Week uses the verified new room, with no override from an obsolete
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6"});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.7"});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/changes/g1")return json(changes);
