@@ -395,6 +395,8 @@ test("Business Law room and teaching-week changes appear as one clear card and l
   await page.setViewportSize({width:390,height:844});
   await selectStoredCourse(page);
   const snap=snapshot();
+  snap.week_number=13;
+  snap.next_week.week_number=14;
   const original=snap.events[2];
   const updated={...original,room_raw:"C1164",room_code:"C1164",weeks_raw:"13",weeks:[13]};
   snap.events[2]=updated;
@@ -458,4 +460,34 @@ test("Week never applies an old change over a newer verified TUS snapshot",async
   await expect(page.locator(".mobile-week-list")).toContainText("B11");
   await expect(page.locator(".mobile-week-list")).not.toContainText("C1164");
   await expect(page.locator(".mobile-week-list .week-changed-tag")).toHaveCount(0);
+});
+
+test("desktop Week uses the verified new room, with no override from an obsolete history entry",async({page})=>{
+  await page.setViewportSize({width:1440,height:900});
+  await selectStoredCourse(page);
+  const snap=snapshot();
+  snap.week_number=13;
+  const before=snap.events[2],after={...before,room_code:"C1164",room_raw:"C1164",weeks_raw:"13",weeks:[13]};
+  snap.events[2]=after;
+  const changes=[
+    {id:7,change_type:"ROOM_CHANGED",module:after.module,activity:after.activity,day:after.day,
+      detected_at:"2026-11-09T09:19:00.000Z",before,after},
+  ];
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json(changes);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=week");
+  const business=page.locator(".week-event").filter({hasText:"Business Law"});
+  await expect(business).toHaveCount(1);
+  await expect(business).toContainText("C1164");
+  await expect(business).not.toContainText("B11");
+  await expect(business.locator(".week-changed-tag")).toHaveText("New room");
 });
