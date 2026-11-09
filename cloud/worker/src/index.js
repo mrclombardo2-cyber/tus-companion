@@ -7,7 +7,7 @@ import { delegationReadiness, delegatedAccessToken, delegatedAuthStatus, startDe
 
 const APP_VERSION = "1.12.0-cloud";
 const LEGAL_VERSION = "2026-09-30";
-const FRONTEND_VERSION = "16.6.6";
+const FRONTEND_VERSION = "16.6.7";
 const INTEREST_TTL_HOURS = 6;
 const INTEREST_TOUCH_MINUTES = 15;
 const CATALOG_REFRESH_HOURS = 24;

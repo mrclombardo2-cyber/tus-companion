@@ -79,3 +79,31 @@ export function currentChangeBadge(group) {
   if (types.has("TIME_CHANGED") && types.size === 1) return "New time";
   return "Changed";
 }
+
+
+// The TUS timetable header week and the event's teaching-weeks field are
+// different things. Never infer the former from e.weeks_raw (e.g. "13").
+export function affectedTimetableWeek(changeGroup, loadedWeeks = []) {
+  const event = changeGroup?.after || changeGroup?.before;
+  const validWeek = n => n != null && Number.isInteger(Number(n)) && Number(n) > 0;
+  if (validWeek(event?.timetable_week_number)) return Number(event.timetable_week_number);
+  // Backfill for older change records which predate persistent week metadata.
+  // The date must lie inside an actual fetched TUS timetable snapshot.
+  const date = event?.date;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ""))) return null;
+  const matched = (loadedWeeks || []).find(week => week?.week_start && week?.week_end &&
+    date >= week.week_start && date <= week.week_end && validWeek(week.week_number));
+  return matched ? Number(matched.week_number) : null;
+}
+export function formatDetectionIrish(iso) {
+  if (!iso) return "Detection time unavailable";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Detection time unavailable";
+  const date = new Intl.DateTimeFormat("en-IE", {
+    timeZone:"Europe/Dublin",weekday:"long",day:"numeric",month:"short",year:"numeric",
+  }).format(d);
+  const time = new Intl.DateTimeFormat("en-GB", {
+    timeZone:"Europe/Dublin",hour:"2-digit",minute:"2-digit",hourCycle:"h23",
+  }).format(d);
+  return date + " · " + time + " (Irish time)";
+}
