@@ -422,9 +422,9 @@ test("Business Law room and teaching-week changes appear as one clear card and l
   await expect(page.locator(".change")).toHaveCount(1);
   await expect(page.locator(".change h3")).toHaveText("Business Law");
   await expect(page.locator(".change-detail")).toHaveCount(2);
-  await expect(page.locator(".change")).toContainText("Now: C1164");
+  await expect(page.locator(".change")).toContainText("Changed to: C1164");
   await expect(page.locator(".change")).toContainText("Before: B11");
-  await expect(page.locator(".change")).toContainText("Now: week 13");
+  await expect(page.locator(".change")).toContainText("Changed to: week 13");
   await expect(page.locator(".change")).toContainText("Before: weeks 4–15");
   await expect(page.locator(".change .change-class-date")).toContainText("Class:");
   await expect(page.locator(".change .change-detected")).toContainText("Detected");
