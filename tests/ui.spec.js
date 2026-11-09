@@ -390,3 +390,72 @@ test("delegated reconnect appears only after university-enabled server configura
   await expect(page.locator('a[href="https://myapps.microsoft.com/"]')).toBeVisible();
   await expect(page.locator('.stale-banner')).toHaveCount(0);
 });
+
+test("Business Law room and teaching-week changes appear as one clear card and link to updated mobile Week", async ({page}) => {
+  await page.setViewportSize({width:390,height:844});
+  await selectStoredCourse(page);
+  const snap=snapshot();
+  const original=snap.events[2];
+  const updated={...original,room_raw:"C1164",room_code:"C1164",weeks_raw:"13",weeks:[13]};
+  snap.events[2]=updated;
+  const detected_at="2026-11-09T09:19:00.000Z";
+  const changes=[
+    {id:2,change_type:"ROOM_CHANGED",module:updated.module,activity:updated.activity,
+      day:updated.day,detected_at,before:original,after:updated},
+    {id:1,change_type:"TEACHING_WEEKS_CHANGED",module:updated.module,activity:updated.activity,
+      day:updated.day,detected_at,before:original,after:updated},
+  ];
+  await page.route("**/api/**", async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json(changes);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=changes");
+  await expect(page.locator(".change")).toHaveCount(1);
+  await expect(page.locator(".change h3")).toHaveText("Business Law");
+  await expect(page.locator(".change-detail")).toHaveCount(2);
+  await expect(page.locator(".change")).toContainText("Now: C1164");
+  await expect(page.locator(".change")).toContainText("Before: B11");
+  await expect(page.locator(".change")).toContainText("Now: week 13");
+  await expect(page.locator(".change")).toContainText("Before: weeks 4–15");
+  await expect(page.locator(".change .change-class-date")).toContainText("Class:");
+  await expect(page.locator(".change .change-detected")).toContainText("Detected");
+  await page.getByRole("button",{name:"View in Week"}).click();
+  await expect(page.locator(".mobile-week")).toBeVisible();
+  await expect(page.locator(".mobile-day.selected")).toHaveAttribute("data-week-date",updated.date);
+  await expect(page.locator(".mobile-week-list")).toContainText("Business Law");
+  await expect(page.locator(".mobile-week-list")).toContainText("C1164");
+  await expect(page.locator(".mobile-week-list")).not.toContainText("B11");
+  await expect(page.locator(".mobile-week-list .week-changed-tag")).toContainText("Changed");
+});
+test("Week never applies an old change over a newer verified TUS snapshot",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await selectStoredCourse(page);
+  const snap=snapshot(),original=snap.events[2],after={...original,room_code:"C1164",room_raw:"C1164",weeks_raw:"13",weeks:[13]};
+  const changes=[{id:3,change_type:"ROOM_CHANGED",module:original.module,activity:original.activity,
+    day:original.day,detected_at:"2026-11-09T09:19:00Z",before:original,after}];
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json(changes);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=changes");
+  await expect(page.locator(".change-week-link")).toHaveCount(0);
+  await page.getByRole("button",{name:"Week"}).click();
+  await page.locator('.mobile-day[data-week-date="'+original.date+'"]').click();
+  await expect(page.locator(".mobile-week-list")).toContainText("B11");
+  await expect(page.locator(".mobile-week-list")).not.toContainText("C1164");
+  await expect(page.locator(".mobile-week-list .week-changed-tag")).toHaveCount(0);
+});
