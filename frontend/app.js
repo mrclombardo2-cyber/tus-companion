@@ -1,3 +1,4 @@
+import { groupTimetableChanges, eventMatchesAfter, matchingChangesForEvent, teachingWeeksLabel, currentChangeBadge } from "./change-utils.js";
 const APP=document.getElementById('app');
 const STORE='tus-companion-course-v1';
 const FILTERS='tus-companion-hidden-modules-v1';
@@ -10,7 +11,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.6.5';
+const CLIENT_VERSION='16.6.6';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -392,9 +393,79 @@ function renderWeek(){
   const desktop=`<div class="week-desktop"><div class="desktop-week-picker" aria-label="Choose week">${weekPicker}</div><div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board" style="${boardStyle}"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div></div>`;
   return `<section class="week-section">${renderMobileWeek(weeks)}${desktop}</section>`;
 }
-function changeLabel(type){return ({ROOM_CHANGED:'Room changed',TIME_CHANGED:'Time changed',CLASS_ADDED:'Class added',CLASS_REMOVED:'Class removed',LECTURER_CHANGED:'Lecturer changed',CLASS_TYPE_CHANGED:'Class type changed',TEACHING_WEEKS_CHANGED:'Teaching weeks changed'})[type]||String(type||'Update').replaceAll('_',' ')}
+function changeLabel(type){
+  return ({
+    ROOM_CHANGED:'Room changed',
+    TIME_CHANGED:'Time changed',
+    CLASS_ADDED:'Class added',
+    CLASS_REMOVED:'Class removed',
+    LECTURER_CHANGED:'Lecturer changed',
+    CLASS_TYPE_CHANGED:'Class type changed',
+    TEACHING_WEEKS_CHANGED:'Teaching weeks updated'
+  })[type]||'Timetable update';
+}
+function changeBadge(event){
+  if(staleSyncReason()||state.usingCached||state.offline)return '';
+  return currentChangeBadge(matchingChangesForEvent(event,state.changes));
+}
+function changeDetail(label,now,before){
+  const earlier=before!=null&&before!==''?'<small>Before: '+esc(before)+'</small>':'';
+  return '<div class="change-detail"><span>'+esc(label)+'</span><strong>Now: '+esc(now||'Not specified')+'</strong>'+earlier+'</div>';
+}
+function changeDetailHtml(change){
+  const before=change.before||{},after=change.after||{};
+  switch(change.change_type){
+    case 'ROOM_CHANGED':
+      return changeDetail('Room',after.room_code||after.room_raw,before.room_code||before.room_raw);
+    case 'TIME_CHANGED':
+      return changeDetail('Time',formatRange(after),formatRange(before));
+    case 'TEACHING_WEEKS_CHANGED':
+      return changeDetail('Teaching weeks listed by TUS',teachingWeeksLabel(after.weeks_raw),teachingWeeksLabel(before.weeks_raw));
+    case 'LECTURER_CHANGED':
+      return changeDetail('Lecturer',after.staff,before.staff);
+    case 'CLASS_TYPE_CHANGED':
+      return changeDetail('Class type',after.type,before.type);
+    case 'CLASS_ADDED':
+      return changeDetail('Added to this week',formatRange(after)+' · '+(after.room_code||after.room_raw||'Room TBC'),null);
+    case 'CLASS_REMOVED':
+      return changeDetail('Removed from this week',formatRange(before)+' · '+(before.room_code||before.room_raw||'Room TBC'),null);
+    default:
+      return '<div class="change-detail"><strong>Change detected</strong></div>';
+  }
+}
+function changeClassDate(group){
+  const date=group.after?.date||group.before?.date;
+  return date&&/^\d{4}-\d{2}-\d{2}$/.test(date)
+    ? longDayIso(date)+', '+shortDateIso(date)
+    : group.day||'Date not available';
+}
+function changeWeekAction(group){
+  const after=group.after;
+  if(!after?.date)return '';
+  const weeks=loadedWeeks();
+  const available=weeks.some(w=>(w.events||[]).some(e=>eventMatchesAfter(e,after)));
+  const visible=mobileHorizonDays(weeks).some(d=>d.date===after.date);
+  if(!available||!visible)return '';
+  return '<button type="button" class="change-week-link" data-change-date="'+esc(after.date)+'">View in Week →</button>';
+}
 function renderChanges(){
-  return `<section>${state.changes.length?state.changes.map(c=>`<article class="change"><div class="change-type">${esc(changeLabel(c.change_type))}</div><h3>${esc(c.module)}</h3><p>${esc(c.day)} · ${esc(formatDetected(c.detected_at))}</p>${c.change_type==='ROOM_CHANGED'?`<b>${esc(c.before?.room_code||c.before?.room_raw)} → ${esc(c.after?.room_code||c.after?.room_raw)}</b>`:''}${c.change_type==='TIME_CHANGED'?`<b>${esc(formatTime(c.before?.start))} → ${esc(formatTime(c.after?.start))}</b>`:''}${c.change_type==='LECTURER_CHANGED'?`<b>${esc(c.before?.staff||'?')} → ${esc(c.after?.staff||'?')}</b>`:''}${c.change_type==='CLASS_TYPE_CHANGED'?`<b>${esc(c.before?.type||'?')} → ${esc(c.after?.type||'?')}</b>`:''}${c.change_type==='TEACHING_WEEKS_CHANGED'?`<b>${esc(c.before?.weeks_raw||'?')} → ${esc(c.after?.weeks_raw||'?')}</b>`:''}</article>`).join(''):'<div class="empty">No new timetable changes.</div>'}</section>`;
+  const groups=groupTimetableChanges(state.changes);
+  if(!groups.length)return '<section><div class="empty">No new timetable changes.</div></section>';
+  const entries=groups.map(group=>{
+    const multiple=group.changes.length>1;
+    const title=multiple?'Lesson updated':changeLabel(group.changes[0].change_type);
+    const details=group.changes.map(changeDetailHtml).join('');
+    const weeksChanged=group.changes.some(c=>c.change_type==='TEACHING_WEEKS_CHANGED');
+    const detected=group.detected_at?'Detected '+formatDetected(group.detected_at):'Detection date unavailable';
+    const explanation=weeksChanged?'<p class="change-explainer">These are the teaching weeks listed by TUS. The Week timetable uses the latest confirmed schedule for each available week; this change alone does not confirm cancellations in other weeks.</p>':'';
+    return '<article class="change"><div class="change-type">'+esc(title)+'</div>'+
+      '<h3>'+esc(group.module)+'</h3>'+
+      '<div class="change-class-date">Class: '+esc(changeClassDate(group))+'</div>'+
+      '<p class="change-detected">'+esc(detected)+'</p>'+
+      '<div class="change-details">'+details+'</div>'+explanation+
+      changeWeekAction(group)+'</article>';
+  }).join('');
+  return '<section class="changes-list">'+entries+'</section>';
 }
 function pushStatusText(){if(!state.push.supported)return 'Not supported in this browser';if(state.push.permission==='denied')return 'Blocked by browser settings';if(state.push.subscribed)return 'Enabled on this device';return 'Off on this device'}
 function installSummary(){const d=deviceInfo();if(d.standalone)return 'Installed on this device';if(d.ios)return 'Add to Home Screen from Safari';if(d.android)return deferredInstallPrompt?'Ready to install':'Install from your browser menu';return deferredInstallPrompt?'Ready to install':'Use the install icon in Chrome/Edge'}
