@@ -427,7 +427,7 @@ test("Business Law room and teaching-week changes appear as one clear card and l
   await expect(page.locator(".change")).toContainText("Changed to: week 13");
   await expect(page.locator(".change")).toContainText("Before: weeks 4–15");
   await expect(page.locator(".change-week")).toContainText("TUS timetable week 13");
-  await expect(page.locator(".change .change-class-date")).toContainText("Wednesday");
+  await expect(page.locator(".change .change-class-date")).toContainText(updated.day);
   await expect(page.locator(".change .change-detected")).toContainText("Monday");
   await expect(page.locator(".change .change-detected")).toContainText("9 Nov 2026");
   await expect(page.locator(".change .change-detected")).toContainText("09:19");
