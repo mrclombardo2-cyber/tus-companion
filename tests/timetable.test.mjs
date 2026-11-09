@@ -1,3 +1,4 @@
+import { groupTimetableChanges, eventMatchesAfter, matchingChangesForEvent, teachingWeeksLabel, currentChangeBadge } from "../frontend/change-utils.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -262,4 +263,41 @@ test("portable PowerShell recovery enumerates workflow runs before parsing times
   assert.match(script, /\[DateTimeOffset\]::TryParse\(\[string\]\$Run\.createdAt, \[ref\]\$CreatedAt\)/);
   assert.match(script, /& \$GhExe run watch \$RunId --repo \$Repository --exit-status/);
   assert.match(script, /& \$GhExe secret delete TUS_RECOVERY_STATE_B64 --repo \$Repository/);
+});
+
+test("one Business Law change card groups room and teaching-week edits from the same source update", () => {
+  const before = {
+    module:"Business Law",activity:"Business law lecture",day:"Wednesday",date:"2026-11-11",
+    start:"13:00",end:"14:00",room_code:"B11",room_raw:"B11",
+    weeks_raw:"4-15",staff:"Lecturer",type:"Lecture",student_groups:["G1"],
+  };
+  const after = {...before,room_code:"C1164",room_raw:"C1164",weeks_raw:"13"};
+  const detected_at="2026-11-09T09:19:00.000Z";
+  const changes = [
+    {change_type:"ROOM_CHANGED",module:before.module,activity:before.activity,day:before.day,detected_at,before,after},
+    {change_type:"TEACHING_WEEKS_CHANGED",module:before.module,activity:before.activity,day:before.day,detected_at,before,after},
+  ];
+  const grouped=groupTimetableChanges(changes);
+  assert.equal(grouped.length,1);
+  assert.deepEqual(grouped[0].changes.map(c=>c.change_type),["ROOM_CHANGED","TEACHING_WEEKS_CHANGED"]);
+  assert.equal(matchingChangesForEvent(after,changes)?.changes.length,2);
+  assert.equal(currentChangeBadge(grouped[0]),"Changed");
+  assert.equal(teachingWeeksLabel("4-15"),"weeks 4–15");
+  assert.equal(teachingWeeksLabel("13"),"week 13");
+  assert.deepEqual(before,{...after,room_code:"B11",room_raw:"B11",weeks_raw:"4-15"});
+});
+test("old changes cannot modify Week or badge classes whose current source snapshot differs",()=>{
+  const before={module:"Business Law",activity:"Lecture",day:"Wednesday",date:"2026-11-11",
+    start:"13:00",end:"14:00",room_code:"B11",weeks_raw:"4-15",
+    staff:"Teacher",type:"Lecture",student_groups:["G1"]};
+  const after={...before,room_code:"C1164",weeks_raw:"13"};
+  const change={change_type:"ROOM_CHANGED",module:"Business Law",activity:"Lecture",day:"Wednesday",
+    detected_at:"2026-11-09T09:19:00Z",before,after};
+  assert.equal(eventMatchesAfter(after,after),true);
+  assert.equal(eventMatchesAfter(before,after),false);
+  assert.equal(matchingChangesForEvent(before,[change]),null);
+  assert.equal(matchingChangesForEvent({...after,date:"2026-11-18"},[change]),null);
+  assert.equal(matchingChangesForEvent({...after,start:"15:00"},[change]),null);
+  assert.equal(matchingChangesForEvent({...after,room_code:"A12"},[change]),null);
+  assert.equal(currentChangeBadge(groupTimetableChanges([change])[0]),"New room");
 });
