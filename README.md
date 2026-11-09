@@ -23,6 +23,15 @@ Worker API + PWA
 - Non viene più pre-caricato continuamente il catalogo dei gruppi non usati.
 - GitHub Actions esegue test automatici, deploy e verifica live.
 
+## Changelog v16.6.7: quale settimana e quale giorno è cambiata una lezione
+
+Nella schermata **Changes**, ogni gruppo di modifiche mostra due sezioni separate:
+
+- **LESSON AFFECTED**: numero della settimana dell'orario selezionata nella fonte TUS (*TUS timetable week*), giorno della settimana e data completa della lezione interessata e fascia oraria. Il numero viene salvato insieme allo stato storico \`before/after\` per i nuovi cambiamenti. Per quelli già registrati, si recupera soltanto se il giorno cade in un autentico snapshot TUS ancora disponibile; altrimenti si mostra chiaramente che il numero è sconosciuto. **Non** si usa il campo \`Teaching weeks\` per inventarlo.
+- **CHANGE FIRST DETECTED**: giorno della settimana, data e ora di **rilevamento** in \`Europe/Dublin\` (orario irlandese), ad esempio «Monday, 9 Nov 2026 · 09:19». Non si presenta il rilevamento come momento esatto in cui TUS ha modificato l'orario: la modifica può essere stata inserita prima, fra due sincronizzazioni.
+
+Gli orari nella schermata **Week** restano sempre quelli dello snapshot TUS confermato, non sono ricalcolati applicando una seconda volta le modifiche storiche.
+
 ## Changelog v16.6.6: Changes e Week coerenti
 
 - **Changes** raggruppa le variazioni rilevate nello stesso aggiornamento per la stessa lezione (ad es. cambio aula e settimane di Business Law) in una singola scheda: aula/tempo/settimane attuali, valori precedenti, data della lezione e *data di rilevazione* separata. Non confonde più il giorno in cui la lezione si tiene con il giorno della modifica.
