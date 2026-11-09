@@ -608,3 +608,17 @@ button,a,[role="button"],input,select,textarea{touch-action:manipulation}
   .change-detail{padding:11px 12px}
   .change-detail>strong{font-size:15px}
 }
+
+
+/* v16.6.7 — exactly which class changed, and when that change was detected */
+.change-context{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:15px}
+.change-lesson,.change-detected{min-width:0;border-radius:13px;padding:13px 14px;border:1px solid #e8e3d7}
+.change-lesson{background:#f4f0e6;border-color:#e1d5b8}
+.change-detected{background:#f7f6f2;margin:0;color:#282720}
+.change-context-label{display:block;font-size:9px!important;letter-spacing:.075em;font-weight:850!important;color:#847249!important;margin-bottom:8px}
+.change-week{display:block;font-size:14px;color:#2c2617;line-height:1.28;overflow-wrap:anywhere}
+.change-class-date{font-size:14px!important;font-weight:760!important;color:#25231e!important;margin-top:7px!important;line-height:1.35}
+.change-lesson>small,.change-detected>small{display:block;margin-top:6px;font-size:11px;line-height:1.45;color:#79736a}
+.change-detected>strong{display:block;font-size:13px;line-height:1.4;color:#38352e;overflow-wrap:anywhere}
+.change-details{margin-top:13px}
+@media(max-width:560px){.change-context{grid-template-columns:1fr;gap:8px}.change-lesson,.change-detected{padding:12px 13px}.change-week{font-size:15px}}
