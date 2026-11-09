@@ -21,7 +21,7 @@ test("internal gaps appear as subtle breaks on Today and mobile Week",async({pag
   await page.route("**/api/**",async route=>{
     const path=new URL(route.request().url()).pathname,json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.5",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/changes/g1")return json([]);
@@ -49,7 +49,7 @@ test("desktop Week marks only real internal timetable gaps",async({page})=>{
   await page.route("**/api/**",async route=>{
     const path=new URL(route.request().url()).pathname,json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.5",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
     if(path==="/api/changes/g1")return json([]);
@@ -112,7 +112,7 @@ test("mobile keeps pinch zoom available and avoids iOS form-focus zoom",async({p
 test("service worker updates cannot strand an old frontend",async({page})=>{
   await mockApi(page);
   await page.goto("/");
-  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.6.5",{cache:"no-store"}).then(r=>r.text()));
+  const source=await page.evaluate(async()=>await fetch("/app.js?v=16.6.6",{cache:"no-store"}).then(r=>r.text()));
   expect(source).toContain("navigator.serviceWorker.addEventListener('controllerchange'");
   expect(source).toContain("window.location.reload()");
   expect(source).toContain("swControllerSeen");
@@ -229,9 +229,9 @@ test("Week cards keep long course names fully visible",async({page})=>{
 test("installed PWA actively upgrades to the newest client shell",async({page})=>{
   await mockApi(page);
   await page.goto("/");
-  const appSource=await page.evaluate(async()=>await fetch("/app.js?v=16.6.5",{cache:"no-store"}).then(r=>r.text()));
-  const swSource=await page.evaluate(async()=>await fetch("/sw.js?v=16.6.5",{cache:"no-store"}).then(r=>r.text()));
-  expect(appSource).toContain("const CLIENT_VERSION='16.6.5'");
+  const appSource=await page.evaluate(async()=>await fetch("/app.js?v=16.6.6",{cache:"no-store"}).then(r=>r.text()));
+  const swSource=await page.evaluate(async()=>await fetch("/sw.js?v=16.6.6",{cache:"no-store"}).then(r=>r.text()));
+  expect(appSource).toContain("const CLIENT_VERSION='16.6.6'");
   expect(appSource).toContain("register('/sw.js?v='+encodeURIComponent(CLIENT_VERSION)");
   expect(appSource).toContain("ensureLatestClient");
   expect(appSource).toContain("visibilitychange");
@@ -239,7 +239,7 @@ test("installed PWA actively upgrades to the newest client shell",async({page})=
   expect(swSource).toContain("includeUncontrolled:true");
   expect(swSource).toContain("navigationPreload");
   expect(swSource).toContain("cache:'no-store'");
-  expect(swSource).toContain("tus-companion-v16.6.5");
+  expect(swSource).toContain("tus-companion-v16.6.6");
 });
 
 test("first open of a stale course waits for fresh data before showing the timetable",async({page})=>{
@@ -255,7 +255,7 @@ test("first open of a stale course waits for fresh data before showing the timet
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.5",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:new Date(Date.now()-6*60*60*1000).toISOString()}});
     if(path==="/api/timetable/g1"){
       timetableCalls++;
@@ -297,7 +297,7 @@ test("returning user sees cached timetable immediately and refreshes in backgrou
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.5",contact_email:""});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",contact_email:""});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"queued",last_attempt_at:new Date().toISOString(),last_success_at:staleSync.last_success_at}});
     if(path==="/api/timetable/g1"){
       calls++;
@@ -329,7 +329,7 @@ test('stale cloud data and a source outage are never labelled Updated',async({pa
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
     if(path==='/api/catalog')return json(catalog);
-    if(path==='/api/meta')return json({version:'1.12.0-cloud',frontend_version:'16.6.5'});
+    if(path==='/api/meta')return json({version:'1.12.0-cloud',frontend_version:'16.6.6'});
     if(path==='/api/watch')return json({ok:true,has_snapshot:true,sync});
     if(path==='/api/timetable/g1')return json({snapshot:snap,sync});
     if(path==='/api/changes/g1')return json([]);
@@ -356,7 +356,7 @@ test('stale cloud data without an explicit source error shows an update delay',a
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:'application/json',body:JSON.stringify(body)});
     if(path==='/api/catalog')return json(catalog);
-    if(path==='/api/meta')return json({version:'1.12.0-cloud',frontend_version:'16.6.5'});
+    if(path==='/api/meta')return json({version:'1.12.0-cloud',frontend_version:'16.6.6'});
     if(path==='/api/watch')return json({ok:true,has_snapshot:true,sync});
     if(path==='/api/timetable/g1')return json({snapshot:snap,sync});
     if(path==='/api/changes/g1')return json([]);
@@ -378,7 +378,7 @@ test("delegated reconnect appears only after university-enabled server configura
     const path=new URL(route.request().url()).pathname;
     const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
     if(path==="/api/catalog")return json(catalog);
-    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.5",delegated_login_enabled:true});
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6",delegated_login_enabled:true});
     if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync});
     if(path==="/api/timetable/g1")return json({snapshot:snap,sync});
     if(path==="/api/changes/g1")return json([]);
@@ -389,4 +389,105 @@ test("delegated reconnect appears only after university-enabled server configura
   await expect(page.locator('a[href="/api/entraid/connect"]')).toBeVisible();
   await expect(page.locator('a[href="https://myapps.microsoft.com/"]')).toBeVisible();
   await expect(page.locator('.stale-banner')).toHaveCount(0);
+});
+
+test("Business Law room and teaching-week changes appear as one clear card and link to updated mobile Week", async ({page}) => {
+  await page.setViewportSize({width:390,height:844});
+  await selectStoredCourse(page);
+  const snap=snapshot();
+  snap.week_number=13;
+  snap.next_week.week_number=14;
+  const original=snap.events[2];
+  const updated={...original,room_raw:"C1164",room_code:"C1164",weeks_raw:"13",weeks:[13]};
+  snap.events[2]=updated;
+  const detected_at="2026-11-09T09:19:00.000Z";
+  const changes=[
+    {id:2,change_type:"ROOM_CHANGED",module:updated.module,activity:updated.activity,
+      day:updated.day,detected_at,before:original,after:updated},
+    {id:1,change_type:"TEACHING_WEEKS_CHANGED",module:updated.module,activity:updated.activity,
+      day:updated.day,detected_at,before:original,after:updated},
+  ];
+  await page.route("**/api/**", async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json(changes);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=changes");
+  await expect(page.locator(".change")).toHaveCount(1);
+  await expect(page.locator(".change h3")).toHaveText("Business Law");
+  await expect(page.locator(".change-detail")).toHaveCount(2);
+  await expect(page.locator(".change")).toContainText("Changed to: C1164");
+  await expect(page.locator(".change")).toContainText("Before: B11");
+  await expect(page.locator(".change")).toContainText("Changed to: week 13");
+  await expect(page.locator(".change")).toContainText("Before: weeks 4–15");
+  await expect(page.locator(".change .change-class-date")).toContainText("Class:");
+  await expect(page.locator(".change .change-detected")).toContainText("Detected");
+  await page.getByRole("button",{name:"View in Week"}).click();
+  await expect(page.locator(".mobile-week")).toBeVisible();
+  await expect(page.locator(".mobile-day.selected")).toHaveAttribute("data-week-date",updated.date);
+  await expect(page.locator(".mobile-week-list")).toContainText("Business Law");
+  await expect(page.locator(".mobile-week-list")).toContainText("C1164");
+  await expect(page.locator(".mobile-week-list")).not.toContainText("B11");
+  await expect(page.locator(".mobile-week-list .week-changed-tag")).toContainText("Changed");
+});
+test("Week never applies an old change over a newer verified TUS snapshot",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await selectStoredCourse(page);
+  const snap=snapshot(),original=snap.events[2],after={...original,room_code:"C1164",room_raw:"C1164",weeks_raw:"13",weeks:[13]};
+  const changes=[{id:3,change_type:"ROOM_CHANGED",module:original.module,activity:original.activity,
+    day:original.day,detected_at:"2026-11-09T09:19:00Z",before:original,after}];
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json(changes);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=changes");
+  await expect(page.locator(".change-week-link")).toHaveCount(0);
+  await page.getByRole("button",{name:"Week"}).click();
+  await page.locator('.mobile-day[data-week-date="'+original.date+'"]').click();
+  await expect(page.locator(".mobile-week-list")).toContainText("B11");
+  await expect(page.locator(".mobile-week-list")).not.toContainText("C1164");
+  await expect(page.locator(".mobile-week-list .week-changed-tag")).toHaveCount(0);
+});
+
+test("desktop Week uses the verified new room, with no override from an obsolete history entry",async({page})=>{
+  await page.setViewportSize({width:1440,height:900});
+  await selectStoredCourse(page);
+  const snap=snapshot();
+  snap.week_number=13;
+  const before=snap.events[2],after={...before,room_code:"C1164",room_raw:"C1164",weeks_raw:"13",weeks:[13]};
+  snap.events[2]=after;
+  const changes=[
+    {id:7,change_type:"ROOM_CHANGED",module:after.module,activity:after.activity,day:after.day,
+      detected_at:"2026-11-09T09:19:00.000Z",before,after},
+  ];
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.6"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json(changes);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=week");
+  const business=page.locator(".week-event").filter({hasText:"Business Law"});
+  await expect(business).toHaveCount(1);
+  await expect(business).toContainText("C1164");
+  await expect(business).not.toContainText("B11");
+  await expect(business.locator(".week-changed-tag")).toHaveText("New room");
 });

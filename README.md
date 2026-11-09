@@ -23,6 +23,15 @@ Worker API + PWA
 - Non viene più pre-caricato continuamente il catalogo dei gruppi non usati.
 - GitHub Actions esegue test automatici, deploy e verifica live.
 
+## Changelog v16.6.6: Changes e Week coerenti
+
+- **Changes** raggruppa le variazioni rilevate nello stesso aggiornamento per la stessa lezione (ad es. cambio aula e settimane di Business Law) in una singola scheda: aula/tempo/settimane attuali, valori precedenti, data della lezione e *data di rilevazione* separata. Non confonde più il giorno in cui la lezione si tiene con il giorno della modifica.
+- Le settimane indicate da Scientia (ad es. 4–15 → 13) sono presentate come **etichette di settimane di insegnamento riportate da TUS**, non come cancellazioni garantite di tutte le altre lezioni. L'orario ufficiale resta la fonte autorevole.
+- La schermata **Week** continua ad applicare automaticamente l'ultima versione *confermata* dal server TUS, già contenente l'aula e gli eventi correnti. Il feed Changes è storico: **non deve essere riapplicato come patch**, altrimenti potrebbe sovrascrivere dati più recenti.
+- Solo se un evento nel Week/Today coincide esattamente con lo stato **after** dell'ultima variazione compare un indicatore discreto «Changed», «New room» o «New time». I cambiamenti superati, le date diverse e i dati offline/in ritardo non possono generare badge fuorvianti.
+- La scheda Changes offre «View in Week» solo per lezioni effettivamente presenti nella finestra di date visualizzabile della Week. Su mobile seleziona automaticamente il giorno giusto.
+- Modulo JS autonomo incluso nella cache offline della service worker e test di regressione per grouping, aggiornamenti verificati e vecchie modifiche.
+
 ## Funzioni v16
 
 - Today e Week responsive;
