@@ -1,4 +1,4 @@
-import { groupTimetableChanges, eventMatchesAfter, matchingChangesForEvent, teachingWeeksLabel, currentChangeBadge } from "../frontend/change-utils.js";
+import { groupTimetableChanges, eventMatchesAfter, matchingChangesForEvent, teachingWeeksLabel, currentChangeBadge, affectedTimetableWeek, formatDetectionIrish } from "../frontend/change-utils.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -300,4 +300,41 @@ test("old changes cannot modify Week or badge classes whose current source snaps
   assert.equal(matchingChangesForEvent({...after,start:"15:00"},[change]),null);
   assert.equal(matchingChangesForEvent({...after,room_code:"A12"},[change]),null);
   assert.equal(currentChangeBadge(groupTimetableChanges([change])[0]),"New room");
+});
+
+
+test("changes retain the official selected TUS timetable week instead of inferring it from teaching weeks",()=>{
+  const original={day:"Wednesday",date:"2026-11-11",module:"Business Law",activity:"Lecture",
+    start:"13:00",end:"14:00",room_code:"B11",weeks_raw:"4-15",student_groups:["G1"]};
+  const updated={...original,room_code:"C1164",weeks_raw:"13"};
+  const before={week_number:13,week_start:"2026-11-09",week_end:"2026-11-15",events:[original]};
+  const after={...before,events:[updated]};
+  const changes=diffSnapshots(before,after,"2026-11-09T09:19:00.000Z");
+  assert.deepEqual(changes.map(c=>c.change_type),["ROOM_CHANGED","TEACHING_WEEKS_CHANGED"]);
+  for(const change of changes){
+    assert.equal(change.after.timetable_week_number,13);
+    assert.equal(change.after.timetable_week_start,"2026-11-09");
+    assert.equal(change.before.timetable_week_number,13);
+    assert.equal(affectedTimetableWeek({after:change.after}),13);
+  }
+  assert.equal(teachingWeeksLabel(changes[0].after.weeks_raw),"week 13");
+});
+test("old change history uses verified TUS week metadata or reports unknown, never fabricates a week",()=>{
+  const event={date:"2026-11-11",day:"Wednesday",module:"Business Law",weeks_raw:"13"};
+  assert.equal(affectedTimetableWeek({after:event},[]),null);
+  assert.equal(affectedTimetableWeek({after:event},[
+    {week_number:13,week_start:"2026-11-09",week_end:"2026-11-15"},
+  ]),13);
+  assert.equal(affectedTimetableWeek({after:event},[
+    {week_number:12,week_start:"2026-11-02",week_end:"2026-11-08"},
+  ]),null);
+  assert.equal(affectedTimetableWeek({after:{...event,timetable_week_number:14}},[]),14);
+});
+test("change detection includes correct weekday and Irish time, not lesson weekday",()=>{
+  const formatted=formatDetectionIrish("2026-11-09T09:19:00.000Z");
+  assert.match(formatted,/Monday/);
+  assert.match(formatted,/9 Nov 2026/);
+  assert.match(formatted,/09:19/);
+  assert.match(formatted,/Irish time/);
+  assert.equal(formatDetectionIrish("not-a-date"),"Detection time unavailable");
 });
