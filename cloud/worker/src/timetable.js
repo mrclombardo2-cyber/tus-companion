@@ -293,14 +293,25 @@ export function diffSnapshots(before, after, detectedAt = new Date().toISOString
   for (const key of keys) {
     for (const [b, a] of pair(bmap.get(key) || [], amap.get(key) || [])) {
       const exemplar = a || b;
+      // Persist the TUS-selected timetable week with the historical event.
+      // A teaching-week range (e.g. "4-15") is NOT a reliable substitute
+      // for the week number of the timetable snapshot being compared.
+      const sourceContext = (event, snapshot) => {
+        if (!event) return null;
+        const n = snapshot?.week_number;
+        const weekNumber = n != null && Number.isInteger(Number(n)) && Number(n) > 0 ? Number(n) : null;
+        return { ...event, timetable_week_number: weekNumber, timetable_week_start: snapshot?.week_start || null };
+      };
+      const beforeEvent = sourceContext(b, before);
+      const afterEvent = sourceContext(a, after);
       const base = { module: exemplar.module, activity: exemplar.activity, day: exemplar.day, detected_at: detectedAt };
-      if (!b) { changes.push({ change_type: "CLASS_ADDED", before: null, after: a, ...base }); continue; }
-      if (!a) { changes.push({ change_type: "CLASS_REMOVED", before: b, after: null, ...base }); continue; }
-      if (b.start !== a.start || b.end !== a.end) changes.push({ change_type: "TIME_CHANGED", before: b, after: a, ...base });
-      if ((b.room_code || b.room_raw) !== (a.room_code || a.room_raw)) changes.push({ change_type: "ROOM_CHANGED", before: b, after: a, ...base });
-      if (String(b.staff || "").trim().toLowerCase() !== String(a.staff || "").trim().toLowerCase()) changes.push({ change_type: "LECTURER_CHANGED", before: b, after: a, ...base });
-      if (String(b.type || "").trim().toLowerCase() !== String(a.type || "").trim().toLowerCase()) changes.push({ change_type: "CLASS_TYPE_CHANGED", before: b, after: a, ...base });
-      if (String(b.weeks_raw || "").trim().toLowerCase() !== String(a.weeks_raw || "").trim().toLowerCase()) changes.push({ change_type: "TEACHING_WEEKS_CHANGED", before: b, after: a, ...base });
+      if (!b) { changes.push({ change_type: "CLASS_ADDED", before: null, after: afterEvent, ...base }); continue; }
+      if (!a) { changes.push({ change_type: "CLASS_REMOVED", before: beforeEvent, after: null, ...base }); continue; }
+      if (b.start !== a.start || b.end !== a.end) changes.push({ change_type: "TIME_CHANGED", before: beforeEvent, after: afterEvent, ...base });
+      if ((b.room_code || b.room_raw) !== (a.room_code || a.room_raw)) changes.push({ change_type: "ROOM_CHANGED", before: beforeEvent, after: afterEvent, ...base });
+      if (String(b.staff || "").trim().toLowerCase() !== String(a.staff || "").trim().toLowerCase()) changes.push({ change_type: "LECTURER_CHANGED", before: beforeEvent, after: afterEvent, ...base });
+      if (String(b.type || "").trim().toLowerCase() !== String(a.type || "").trim().toLowerCase()) changes.push({ change_type: "CLASS_TYPE_CHANGED", before: beforeEvent, after: afterEvent, ...base });
+      if (String(b.weeks_raw || "").trim().toLowerCase() !== String(a.weeks_raw || "").trim().toLowerCase()) changes.push({ change_type: "TEACHING_WEEKS_CHANGED", before: beforeEvent, after: afterEvent, ...base });
     }
   }
   return changes;
