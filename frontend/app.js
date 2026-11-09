@@ -1,4 +1,4 @@
-import { groupTimetableChanges, eventMatchesAfter, matchingChangesForEvent, teachingWeeksLabel, currentChangeBadge } from "./change-utils.js";
+import { groupTimetableChanges, eventMatchesAfter, matchingChangesForEvent, teachingWeeksLabel, currentChangeBadge, affectedTimetableWeek, formatDetectionIrish } from "./change-utils.js";
 const APP=document.getElementById('app');
 const STORE='tus-companion-course-v1';
 const FILTERS='tus-companion-hidden-modules-v1';
@@ -11,7 +11,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.6.6';
+const CLIENT_VERSION='16.6.7';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -435,9 +435,15 @@ function changeDetailHtml(change){
 }
 function changeClassDate(group){
   const date=group.after?.date||group.before?.date;
-  return date&&/^\d{4}-\d{2}-\d{2}$/.test(date)
-    ? longDayIso(date)+', '+shortDateIso(date)
-    : group.day||'Date not available';
+  if(date&&/^\d{4}-\d{2}-\d{2}$/.test(date)){
+    const parsed=new Date(date+'T12:00:00');
+    return new Intl.DateTimeFormat('en-IE',{weekday:'long',day:'numeric',month:'short',year:'numeric'}).format(parsed);
+  }
+  return group.day ? group.day+' · date unavailable' : 'Class date unavailable';
+}
+function changeAffectedWeek(group){
+  const n=affectedTimetableWeek(group,loadedWeeks());
+  return n!=null?'TUS timetable week '+n:'TUS timetable week unavailable';
 }
 function changeWeekAction(group){
   const after=group.after;
@@ -456,12 +462,18 @@ function renderChanges(){
     const title=multiple?'Lesson updated':changeLabel(group.changes[0].change_type);
     const details=group.changes.map(changeDetailHtml).join('');
     const weeksChanged=group.changes.some(c=>c.change_type==='TEACHING_WEEKS_CHANGED');
-    const detected=group.detected_at?'Detected '+formatDetected(group.detected_at):'Detection date unavailable';
-    const explanation=weeksChanged?'<p class="change-explainer">These are the teaching weeks listed by TUS. The Week timetable uses the latest confirmed schedule for each available week; this change alone does not confirm cancellations in other weeks.</p>':'';
+    const lesson=group.after||group.before||{};
+    const lessonTime=lesson.start&&lesson.end?formatRange(lesson):'Class time unavailable';
+    const explanation=weeksChanged?'<p class="change-explainer">Teaching weeks describe when this activity is listed. They are different from the selected TUS timetable week above; changes alone do not confirm cancellations on other dates.</p>':'';
     return '<article class="change"><div class="change-type">'+esc(title)+'</div>'+
       '<h3>'+esc(group.module)+'</h3>'+
-      '<div class="change-class-date">Class: '+esc(changeClassDate(group))+'</div>'+
-      '<p class="change-detected">'+esc(detected)+'</p>'+
+      '<div class="change-context"><div class="change-lesson"><span class="change-context-label">LESSON AFFECTED</span>'+
+      '<strong class="change-week">'+esc(changeAffectedWeek(group))+'</strong>'+
+      '<div class="change-class-date">'+esc(changeClassDate(group))+'</div>'+
+      '<small>'+esc(lessonTime)+'</small></div>'+
+      '<div class="change-detected"><span class="change-context-label">CHANGE FIRST DETECTED</span>'+
+      '<strong>'+esc(formatDetectionIrish(group.detected_at))+'</strong>'+
+      '<small>TUS may have edited it earlier.</small></div></div>'+
       '<div class="change-details">'+details+'</div>'+explanation+
       changeWeekAction(group)+'</article>';
   }).join('');
