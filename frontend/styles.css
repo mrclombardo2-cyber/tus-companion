@@ -600,7 +600,7 @@ button,a,[role="button"],input,select,textarea{touch-action:manipulation}
 .week-changed-tag,.today-change-badge{background:#fffdf6;color:#765d22;border:1px solid #d5be7f;border-radius:999px;display:inline-block;font-size:10px;font-style:normal;font-weight:850;line-height:1.15;padding:3px 7px;white-space:nowrap}
 .today-change-badge{font-size:9px;margin-left:2px}
 .week-event .week-changed-tag{align-self:flex-start;font-size:8px;padding:2px 5px;max-width:100%;text-overflow:ellipsis;overflow:hidden}
-.mobile-week-side .week-changed-tag{max-width:100%;font-size:9px;text-align:right;padding:3px 5px}
+.mobile-week-side .week-changed-tag{max-width:100%;font-size:8px;text-align:right;padding:3px 3px}
 .mobile-week-card .mobile-week-side{align-content:center;gap:7px}
 @media(max-width:520px){
   .changes-list{gap:12px}
