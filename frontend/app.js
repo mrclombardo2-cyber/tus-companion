@@ -416,8 +416,8 @@ function renderWeek(){
   const selectableWeeks=weeks;
   const weekPicker=selectableWeeks.map(w=>`<button class="desktop-week-chip ${w.week_start===selectedWeek.week_start?'selected':''}" data-week-select="${esc(w.week_start||'')}">${esc(weekChipLabel(w,currentWeek))}</button>`).join('');
   const columnCount=Math.max(1,displayDates.length),boardStyle=`grid-template-columns:72px repeat(${columnCount},minmax(230px,1fr));min-width:${Math.max(760,72+columnCount*230)}px`;
-  const desktop=`<div class="week-desktop"><div class="desktop-week-picker" aria-label="Choose week">${weekPicker}</div>${examPeriodNotice(selectedWeek?.week_start||isoToday())}<div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board" style="${boardStyle}"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div></div>`;
-  return `<section class="week-section">${renderMobileWeek(weeks)}${desktop}${examWeekSummary(state.examData,selectedExamProgramme(),selectedWeek)}</section>`;
+  const desktop=`<div class="week-desktop"><div class="desktop-week-picker" aria-label="Choose week">${weekPicker}</div>${examPeriodNotice(selectedWeek?.week_start||isoToday())}<div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board" style="${boardStyle}"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div>${examWeekSummary(state.examData,selectedExamProgramme(),selectedWeek)}</div>`;
+  return `<section class="week-section">${renderMobileWeek(weeks)}${desktop}</section>`;
 }
 async function refreshExamData(){
   try{
