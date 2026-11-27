@@ -1,7 +1,10 @@
-name: Deploy Cloudflare Worker v16.6.8
+name: Deploy Cloudflare Worker v16.6.9
 
 on:
   workflow_dispatch:
+  # Refresh published exam sources twice daily during the December exam season.
+  schedule:
+    - cron: "17 7,17 * 11,12 *"
   push:
     branches: ["main"]
     paths:
@@ -96,7 +99,20 @@ jobs:
           node --check cloud/worker/src/timetable.js
           node --check frontend/app.js
           node --check frontend/change-utils.js
+          node --check frontend/exams-utils.js
           node --check frontend/sw.js
+
+      - name: Refresh current official TUS Midlands exam sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          if python3 -m pip install --disable-pip-version-check --no-input xlrd==2.0.2 &&
+             python3 scripts/build_exam_data.py --output frontend/exam-data.json; then
+            echo "Official TUS exam sources verified for this deployment."
+          else
+            echo "::warning::Official exam source unavailable. Do not display unverified local exam dates."
+            printf '%s\n' '{"schema":1,"period":"TUS Midlands Semester 1 · December 2026","last_checked_at":null,"official_url":"https://tus.ie/exams/midlands/timetables/","sources":[],"programmes":{}}' > frontend/exam-data.json
+          fi
 
       - name: Install regression-test dependencies
         shell: bash
@@ -111,6 +127,7 @@ jobs:
           set -euo pipefail
           node --test tests/calendar.test.mjs
           node --test tests/timetable.test.mjs
+          node --test tests/exams.test.mjs
           python3 -m http.server 4173 --directory frontend >/tmp/tus-companion-http.log 2>&1 &
           server_pid=$!
           trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
@@ -178,7 +195,7 @@ jobs:
             live_app="$(printf '%s\n' "$meta" | jq -r '.frontend_version // ""' 2>/dev/null || true)"
             live_worker="$(printf '%s\n' "$meta" | jq -r '.version // ""' 2>/dev/null || true)"
             departments="$(printf '%s\n' "$catalog" | jq -r '.departments | length' 2>/dev/null || echo 0)"
-            if [ "$live_worker" = "1.12.0-cloud" ] && [ "$live_app" = "16.6.8" ] && [ "${departments:-0}" -gt 0 ] 2>/dev/null; then
+            if [ "$live_worker" = "1.12.0-cloud" ] && [ "$live_app" = "16.6.9" ] && [ "${departments:-0}" -gt 0 ] 2>/dev/null; then
               public_ok=true
               break
             fi

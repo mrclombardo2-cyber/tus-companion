@@ -1,12 +1,12 @@
-const CLIENT_VERSION='16.6.8';
-const CACHE='tus-companion-v16.6.8';
-const CORE=['/','/styles.css','/app.js','/change-utils.js','/manifest.webmanifest','/icon-192.png','/icon-512.png'];
+const CLIENT_VERSION='16.6.9';
+const CACHE='tus-companion-v16.6.9';
+const CORE=['/','/styles.css','/app.js','/change-utils.js','/exams-utils.js','/exams-view.js','/exam-data.json','/manifest.webmanifest','/icon-192.png','/icon-512.png'];
 
 function canonicalRequest(request){
   const u=new URL(request.url);
   if(u.origin!==self.location.origin)return request;
   if(u.pathname==='/'||u.pathname==='/index.html')return new Request(self.location.origin+'/',{method:'GET'});
-  if(['/app.js','/change-utils.js','/styles.css','/manifest.webmanifest','/icon-192.png','/icon-512.png'].includes(u.pathname)){
+  if(['/app.js','/change-utils.js','/exams-utils.js','/exams-view.js','/exam-data.json','/styles.css','/manifest.webmanifest','/icon-192.png','/icon-512.png'].includes(u.pathname)){
     return new Request(self.location.origin+u.pathname,{method:'GET'});
   }
   return request;

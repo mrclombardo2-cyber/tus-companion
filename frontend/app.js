@@ -1,4 +1,6 @@
 import { groupTimetableChanges, eventMatchesAfter, matchingChangesForEvent, teachingWeeksLabel, currentChangeBadge, affectedTimetableWeek, formatDetectionIrish } from "./change-utils.js";
+import { examProgrammeForSelection } from "./exams-utils.js";
+import { renderExamPage, examWeekSummary } from "./exams-view.js";
 const APP=document.getElementById('app');
 const STORE='tus-companion-course-v1';
 const FILTERS='tus-companion-hidden-modules-v1';
@@ -11,7 +13,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.6.8';
+const CLIENT_VERSION='16.6.9';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -68,7 +70,7 @@ let clientVersionReloading=false;
 let lastClientVersionCheck=0;
 const initialSelection=readSelection();
 const initialOffline=readOfflineTimetable(initialSelection?.group);
-let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,waitingForFresh:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline)&&!navigator.onLine,offlineSavedAt:initialOffline?.saved_at||null};
+let state={catalog:readCatalogCache(),selection:initialSelection,snapshot:initialOffline?.snapshot||null,changes:initialOffline?.changes||[],sync:initialOffline?.sync||null,examData:null,examError:false,meta:null,tab:new URLSearchParams(location.search).get('tab')||'today',weekDay:null,weekDate:null,weekStart:null,error:'',refreshing:false,waitingForFresh:false,prefs:readPrefs(),push:{supported:false,permission:'default',subscribed:false},installModal:false,notifyModal:false,legal:null,toast:'',offline:!navigator.onLine,usingCached:Boolean(initialOffline)&&!navigator.onLine,offlineSavedAt:initialOffline?.saved_at||null};
 
 class ApiError extends Error{
   constructor(status,detail,raw=''){super(detail||raw||`Request failed (${status})`);this.status=status;this.detail=detail;this.raw=raw}
@@ -182,7 +184,7 @@ function syncDisplay(){
 }
 function mapButton(e){return e.room_code?`<button class="route" data-map-room="${esc(e.room_code)}">Open map ↗</button>`:''}
 function card(e){const live=isCurrentEvent(e),changed=changeBadge(e);return `<article class="class-card subject-card ${live?'current':''}" style="${subjectStyle(e.module)}" data-event-date="${esc(e.date||'')}" data-event-start="${esc(e.start)}"><div class="clock"><b>${esc(formatTime(e.start))}</b><span>${esc(formatTime(e.end))}</span></div><div><div class="row"><h3>${esc(e.module)}</h3>${live?'<span class="live-tag">NOW</span>':''}<span class="tag">${esc(e.type)}</span>${changed?'<span class="today-change-badge">'+esc(changed)+'</span>':''}</div><div class="place">${esc(e.room_code||e.room_raw)}${e.room_name?`<small> · ${esc(e.room_name)}</small>`:''}</div><div class="teacher">${esc(e.staff)}</div></div>${mapButton(e)}</article>`}
-function nav(){return `<nav>${[['today','Today'],['week','Week'],['changes','Changes'],['settings','Settings']].map(([k,l])=>`<button data-tab="${k}" class="${state.tab===k?'active':''}">${l}</button>`).join('')}</nav>`}
+function nav(){return `<nav>${[['today','Today'],['week','Week'],['exams','Exams'],['changes','Changes'],['settings','Settings']].map(([k,l])=>`<button data-tab="${k}" class="${state.tab===k?'active':''}">${l}</button>`).join('')}</nav>`}
 
 function setup(){
   APP.innerHTML=`<main class="setup"><div class="brandmark">T</div><p class="kicker">TUS ATHLONE</p><h1>Your timetable,<br/>without the hassle.</h1><p class="lead">Pick your course once. We keep the timetable synced and surface room and time changes.</p><label>Department<select id="dep"><option value="">Choose department</option>${state.catalog.map(d=>`<option value="${esc(d.id)}">${esc(d.label)}</option>`).join('')}</select></label><label>Course / group<select id="grp" disabled><option value="">Choose course</option></select></label><button id="save" class="cta" disabled>Use this timetable</button>${state.error?`<div class="setup-error">${esc(state.error)}</div>`:''}<p class="privacy">No TUS password is requested by this app.</p><p class="legal-consent">By continuing, you acknowledge the <button data-legal="terms">Terms of Use</button> and <button data-legal="privacy">Privacy Notice</button>.</p></main>${renderOverlays()}`;
@@ -202,14 +204,14 @@ function renderPending(){
   const m=syncCopy(),group=state.selection?.groupLabel||state.selection?.group||'';
   const attempt=state.sync?.last_attempt_at?`Last attempt ${formatClockDate(state.sync.last_attempt_at)}`:'Connecting…';
   const reconnect=state.meta?.delegated_login_enabled?'<a class="official-timetable-link official-pending-link" href="/api/entraid/connect">Reconnect automatic updates with Microsoft ↗</a>':'';
-  APP.innerHTML=`<main class="app pending-page"><header><div><p class="kicker">TUS ATHLONE</p><h1>Syncing your timetable</h1></div></header>${reconnect}<a class="official-timetable-link official-pending-link" href="https://myapps.microsoft.com/" target="_blank" rel="noopener noreferrer">Check official TUS timetable ↗</a><section class="sync-panel ${m.kind}"><div class="sync-icon"><span></span></div><div class="sync-content"><p class="sync-eyebrow">${esc(group)}</p><h2>${esc(m.title)}</h2><p>${esc(m.body)}</p><div class="sync-meta">${esc(attempt)}</div></div></section><button id="change" class="ghost">Change course</button></main>${renderOverlays()}`;
+  APP.innerHTML=`<main class="app pending-page"><header><div><p class="kicker">TUS ATHLONE</p><h1>Syncing your timetable</h1></div></header>${reconnect}<a class="official-timetable-link official-pending-link" href="https://myapps.microsoft.com/" target="_blank" rel="noopener noreferrer">Check official TUS timetable ↗</a><section class="sync-panel ${m.kind}"><div class="sync-icon"><span></span></div><div class="sync-content"><p class="sync-eyebrow">${esc(group)}</p><h2>${esc(m.title)}</h2><p>${esc(m.body)}</p><div class="sync-meta">${esc(attempt)}</div></div></section><button type="button" data-tab="exams" class="ghost">View exams</button><button id="change" class="ghost">Change course</button></main>${renderOverlays()}`;
   bindCommon();
 }
 function render(){
   if(!state.selection)return setup();
-  if(state.waitingForFresh||!state.snapshot)return renderPending();
-  const title=state.tab==='today'?'Today':state.tab==='week'?weekPageTitle():state.tab==='changes'?'Changes':'Settings';
-  let body=state.tab==='today'?renderToday():state.tab==='week'?renderWeek():state.tab==='changes'?renderChanges():renderSettings();
+  if((state.waitingForFresh||!state.snapshot)&&state.tab!=='exams')return renderPending();
+  const title=state.tab==='today'?'Today':state.tab==='week'?weekPageTitle():state.tab==='exams'?'Exams':state.tab==='changes'?'Changes':'Settings';
+  let body=state.tab==='today'?renderToday():state.tab==='week'?renderWeek():state.tab==='exams'?renderExamPage(state.examData,selectedExamProgramme(),state.examError):state.tab==='changes'?renderChanges():renderSettings();
   const syncUi=syncDisplay();
   const staleReason=staleSyncReason();
   const cacheBanner=(state.offline||state.usingCached)?`<div class="offline-banner" role="status"><div class="offline-copy"><b>${state.offline?'Offline mode':'Reconnecting'}</b><span>${state.offlineSavedAt?`Showing data saved ${esc(formatDetected(state.offlineSavedAt))}.`:'Showing the last timetable saved on this device.'} ${state.offline?'Changes will refresh automatically when the connection returns.':'Automatic retries are running now.'}</span></div>${state.offline?'':'<button id="retry-sync" class="small-ghost" type="button">Retry now</button>'}</div>`:'';
@@ -373,7 +375,7 @@ function renderMobileWeek(weeks){
     '<div class="mobile-day-picker" aria-label="Choose day">'+picker+'</div>'+
     '<div class="mobile-week-heading">'+panel.heading+'</div>'+
     '<div class="mobile-week-list">'+panel.classes+'</div>'+
-    examPeriodNotice(selected)+'</div>';
+    examWeekSummary(state.examData,selectedExamProgramme(),activeWeek)+examPeriodNotice(selected)+'</div>';
 }
 function bindMapButtons(root=APP){
   root.querySelectorAll?.('[data-map-room]').forEach(b=>b.onclick=()=>{const room=(b.dataset.mapRoom||'').trim();if(room)window.open(mapUrl(room),'_blank','noopener,noreferrer')});
@@ -414,8 +416,31 @@ function renderWeek(){
   const selectableWeeks=weeks;
   const weekPicker=selectableWeeks.map(w=>`<button class="desktop-week-chip ${w.week_start===selectedWeek.week_start?'selected':''}" data-week-select="${esc(w.week_start||'')}">${esc(weekChipLabel(w,currentWeek))}</button>`).join('');
   const columnCount=Math.max(1,displayDates.length),boardStyle=`grid-template-columns:72px repeat(${columnCount},minmax(230px,1fr));min-width:${Math.max(760,72+columnCount*230)}px`;
-  const desktop=`<div class="week-desktop"><div class="desktop-week-picker" aria-label="Choose week">${weekPicker}</div>${examPeriodNotice(selectedWeek?.week_start||isoToday())}<div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board" style="${boardStyle}"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div></div>`;
+  const desktop=`<div class="week-desktop"><div class="desktop-week-picker" aria-label="Choose week">${weekPicker}</div>${examPeriodNotice(selectedWeek?.week_start||isoToday())}<div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board" style="${boardStyle}"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div>${examWeekSummary(state.examData,selectedExamProgramme(),selectedWeek)}</div>`;
   return `<section class="week-section">${renderMobileWeek(weeks)}${desktop}</section>`;
+}
+async function refreshExamData(){
+  try{
+    const ctrl=new AbortController();
+    const timeout=setTimeout(()=>ctrl.abort(),12000);
+    let response;
+    try{response=await fetch('/exam-data.json?t='+Date.now(),{cache:'no-store',signal:ctrl.signal});}
+    finally{clearTimeout(timeout);}
+    if(!response.ok)throw new Error('source-unavailable');
+    const data=await response.json();
+    if(data?.schema!==1||typeof data.programmes!=='object'||!Array.isArray(data.sources))
+      throw new Error('exam-schema-invalid');
+    state.examData=data;
+    state.examError=false;
+  }catch{state.examError=true;}
+  if(state.selection&&['exams','week'].includes(state.tab))render();
+}
+function selectedExamProgramme(){
+  if(!state.examData)return null;
+  const key='tus-companion-exam-programme-'+String(state.selection?.group||'');
+  const override=localStorage.getItem(key);
+  if(override&&state.examData.programmes?.[override])return override;
+  return examProgrammeForSelection(state.selection,state.examData);
 }
 function changeLabel(type){
   return ({
@@ -529,6 +554,13 @@ function bindCommon(){
   const retrySync=document.getElementById('retry-sync');
   if(retrySync)retrySync.onclick=async()=>{retrySync.disabled=true;cachedRecoveryStep=0;clearCachedRecovery();await watchAndLoad(true);render()};
   APP.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{const next=b.dataset.tab;if(next==='week'&&state.tab!=='week'){state.weekDate=isoToday();state.weekStart=weekForDate(loadedWeeks(),state.weekDate)?.week_start||null}state.tab=next;history.replaceState(null,'',state.tab==='today'?'/' : `/?tab=${state.tab}`);render()});
+  const examSelect=APP.querySelector('#exam-programme');
+  if(examSelect)examSelect.onchange=()=>{
+    const key='tus-companion-exam-programme-'+String(state.selection?.group||'');
+    if(examSelect.value)localStorage.setItem(key,examSelect.value);
+    else localStorage.removeItem(key);
+    render();
+  };
   APP.querySelectorAll('[data-change-date]').forEach(b=>b.onclick=()=>{
     const date=b.dataset.changeDate;
     const weeks=loadedWeeks();
@@ -775,6 +807,7 @@ async function init(){
     if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
   }catch{}}
   await refreshPushStatus();
+  refreshExamData().catch(()=>{});
   if(state.selection)await watchAndLoad(true,firstCourseLoad);
   state.waitingForFresh=false;
   if(state.selection&&state.snapshot){setTimeout(()=>{if(shouldAutoOfferInstall()){state.installModal=true;render()}else if(shouldOfferNotifyOnboarding()){state.notifyModal=true;render()}},900)}

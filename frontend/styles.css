@@ -638,3 +638,35 @@ button,a,[role="button"],input,select,textarea{touch-action:manipulation}
   .mobile-day-picker{display:flex;gap:7px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;scroll-snap-type:x proximity;max-width:100%;padding:3px 1px 12px;margin-bottom:14px}
   .mobile-day{flex:0 0 clamp(49px,13vw,69px);scroll-snap-align:center;min-height:63px;padding-left:3px;padding-right:3px}
 }
+
+
+/* v16.6.9 — official Midlands exam schedules */
+nav{grid-template-columns:repeat(5,minmax(0,1fr))}
+.exams-view{display:grid;gap:13px;padding-bottom:18px}
+.exams-view h2{font-size:22px;line-height:1.2;margin:4px 0 0}
+.exam-course-label{font-size:11px;font-weight:850;color:#7e6a3e}
+#exam-programme{width:100%;max-width:100%;border:1px solid #ded8c9;border-radius:11px;background:#fff;padding:12px 11px;color:#282720;font-size:13px}
+.exam-code{font-size:11px;letter-spacing:.02em;margin:0;color:#8b877c}
+.exam-list,.exam-week-list{display:grid;gap:10px}
+.exam-card{border:1px solid #dbd3bf;border-left:5px solid #92713d;border-radius:16px;background:#fffdf8;display:grid;gap:7px;padding:16px 18px}
+.exam-card strong{font-size:17px;line-height:1.2;color:#29231b}
+.exam-date{font-size:12px;font-weight:850;color:#755a26}
+.exam-room{font-size:14px;font-weight:700;color:#39362f}
+.exam-card>small{font-size:11px;color:#817a70;overflow-wrap:anywhere}
+.exam-advice,.exam-week-summary>p{font-size:12px;line-height:1.55;color:#756e60}
+.exam-source-status{font-size:11px;line-height:1.5;color:#686153;background:#f3f0e8;border:1px solid #dfd6c6;padding:12px 13px;border-radius:12px}
+.exam-source-stale{border-color:#c89f81;color:#8e4936;background:#fff7f1}
+.exam-source-status a,.exam-official-link{color:#7a5b28;font-weight:800;text-decoration:underline;text-underline-offset:3px}
+.exam-official-link{font-size:12px}
+.exam-week-summary{margin:15px 0 20px;padding:15px;border:1px solid #e0d4bb;border-radius:17px;background:#f6f2e8}
+.exam-week-summary h3{margin:0;color:#403425;font-size:16px}
+.exam-week-summary>p{margin:8px 0 12px}
+.exam-card-compact{padding:11px 13px;background:#fff;gap:5px}
+.exam-card-compact strong{font-size:14px}
+.exam-card-compact .exam-date{font-size:11px}
+.exam-card-compact .exam-room{font-size:12px}
+@media(max-width:760px){
+ nav{grid-template-columns:repeat(5,minmax(0,1fr))}
+ nav button{padding-left:2px;padding-right:2px;font-size:11px}
+ .exam-card{padding:15px 16px}
+}
