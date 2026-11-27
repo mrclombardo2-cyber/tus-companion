@@ -23,6 +23,19 @@ Worker API + PWA
 - Non viene più pre-caricato continuamente il catalogo dei gruppi non usati.
 - GitHub Actions esegue test automatici, deploy e verifica live.
 
+## Official December exams, independently checked (v16.6.9)
+
+TUS Companion now has a separate **Exams** view and a smaller "Exams this week" summary within Week. Exams are NOT lectures and do not alter the authoritative Scientia teaching-timetable snapshot.
+
+- The reader takes the **current linked XLS versions** from the [TUS Midlands Faculty of Business and Hospitality timetable page](https://tus.ie/exams/midlands/timetables/business-and-hospitality/), covering Business & Management, Accounting & Business Computing, and Hospitality/Tourism/Leisure. It regenerates a source-attributed JSON index by **exact programme code**; it does not infer a student's enrolled modules from a shared course title.
+- The build process validates programme codes, date/weekday agreement, location and non-zero exam duration, and excludes student-count columns. It embeds source file name, URL, SHA-256 and last verified time. It fails to an **empty/unverified** exam dataset if the institution's source cannot be fetched, rather than shipping made-up or expired exam bookings.
+- The programme is selected from the course ID where possible (e.g. \`AL_BBSTD_C_2 B\` maps to \`AL_BBSTD_C_2\`); otherwise the student must select the **exact** programme code. This programme timetable can contain optional modules. The application does not claim that every exam in the programme is an exam for that individual.
+- Exam data is refreshed on each Cloudflare deployment and GitHub Actions is scheduled to check the three official source links at **07:17 and 17:17 UTC during November and December**. GitHub Actions scheduling and deployment are not guaranteed to succeed on every attempt. The app marks source checks older than 24 hours as stale and always links to the official TUS exam timetable.
+- The published TUS Midlands exam period is **5–18 December 2026**. This feature is scoped to Semester 1 2026/27: subsequent academic years must update the build script's accepted examination period and official source mapping.
+- TUS explicitly advises students to **check the current online timetable repeatedly**, not to rely on screenshots or downloads. An exam shown in this unofficial app is a source-attributed preview, not a confirmation of personal registration, attendance, time or room; verify with TUS immediately before every assessment.
+
+If a user cannot match their programme or the source check is not fresh, consult the [official TUS Midlands exam timetable](https://tus.ie/exams/midlands/timetables/) rather than guessing.
+
 ## Week and examinations (v16.6.8)
 
 The **Week** view always displays all seven days of the TUS teaching-timetable week and exposes a **This week / Next week** selector, even if there are no classroom events. An empty day is displayed as `No classes listed for this day in the TUS teaching timetable`. When the next-week data was not successfully fetched, it is **not** treated as an empty timetable; the user sees `The timetable for this week has not been loaded from TUS yet`.
