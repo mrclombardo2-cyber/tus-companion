@@ -575,3 +575,27 @@ test("late November Week explains revision and exam period and links to live off
   await expect(page.locator(".mobile-week-list")).toContainText("No classes listed");
   await expect(page.locator(".tus-exam-note")).toContainText("Revision week");
 });
+
+test("an old Friday class never appears in Today on the next Friday",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.clock.setFixedTime(new Date("2026-12-04T11:00:00Z"));
+  await selectStoredCourse(page);
+  const snap=snapshot();
+  snap.week_start="2026-11-23";snap.week_end="2026-11-29";
+  snap.events=[{...snap.events[0],module:"Business Law",day:"Friday",date:"2026-11-27",start:"09:00",end:"10:00",room_code:"B11"}];
+  snap.next_week={week_number:14,week_start:"2026-11-30",week_end:"2026-12-06",events:[],fetched_at:new Date().toISOString()};
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.8"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/");
+  await expect(page.getByText("No classes today.")).toBeVisible();
+  await expect(page.locator(".class-card")).toHaveCount(0);
+});
