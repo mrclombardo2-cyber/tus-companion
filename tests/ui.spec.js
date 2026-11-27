@@ -496,3 +496,82 @@ test("desktop Week uses the verified new room, with no override from an obsolete
   await expect(business).not.toContainText("B11");
   await expect(business.locator(".week-changed-tag")).toHaveText("New room");
 });
+
+
+test("mobile Week shows all seven days and a selectable empty next week",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await selectStoredCourse(page);
+  await mockApi(page);
+  await page.goto("/?tab=week");
+  await expect(page.locator(".mobile-week-tab")).toHaveCount(2);
+  await expect(page.locator(".mobile-day")).toHaveCount(7);
+  await page.locator(".mobile-week-tab").nth(1).click();
+  await expect(page.locator(".mobile-week-tab.selected")).toHaveCount(1);
+  await expect(page.locator(".mobile-day")).toHaveCount(7);
+  await expect(page.locator(".mobile-week-list")).toContainText("No classes listed");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1)).toBeTruthy();
+});
+test("an unavailable next week is never reported as a confirmed day with no classes",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await selectStoredCourse(page);
+  const snap=snapshot();
+  delete snap.next_week;
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.8"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=week");
+  await expect(page.locator(".mobile-week-tab")).toHaveCount(2);
+  await page.locator(".mobile-week-tab").nth(1).click();
+  await expect(page.locator(".mobile-week-list")).toContainText("has not been loaded from TUS yet");
+  await expect(page.locator(".mobile-week-list")).not.toContainText("No classes listed");
+});
+test("desktop Week displays empty days and next week even after teaching ends",async({page})=>{
+  await page.setViewportSize({width:1600,height:900});
+  await selectStoredCourse(page);
+  await mockApi(page);
+  await page.goto("/?tab=week");
+  await expect(page.locator(".week-day-head")).toHaveCount(7);
+  await expect(page.locator(".desktop-week-chip")).toHaveCount(2);
+  await page.locator(".desktop-week-chip").nth(1).click();
+  await expect(page.locator(".week-day-head")).toHaveCount(7);
+  await expect(page.locator(".week-empty-day")).toHaveCount(7);
+});
+test("late November Week explains revision and exam period and links to live official Athlone exam page",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.clock.setFixedTime(new Date("2026-11-27T12:00:00Z"));
+  await selectStoredCourse(page);
+  const snap=snapshot();
+  snap.week_start="2026-11-23";
+  snap.week_end="2026-11-29";
+  snap.events=[{...snap.events[0],module:"Business Law",day:"Friday",date:"2026-11-27",
+    start:"09:00",end:"10:00",room_code:"B11",room_raw:"B11"}];
+  snap.next_week={week_number:14,week_start:"2026-11-30",week_end:"2026-12-06",events:[],fetched_at:new Date().toISOString()};
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.8"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=week");
+  await expect(page.locator(".mobile-day")).toHaveCount(7);
+  await expect(page.locator(".mobile-week-list")).toContainText("Business Law");
+  await expect(page.locator(".tus-exam-note")).toContainText("Revision week begins 30 Nov");
+  await expect(page.locator(".tus-exam-note")).toContainText("5–18 Dec 2026");
+  await expect(page.getByRole("link",{name:"Check official exam timetable"})).toHaveAttribute("href","https://tus.ie/exams/midlands/timetables/");
+  await page.locator(".mobile-week-tab").nth(1).click();
+  await expect(page.locator(".mobile-week-list")).toContainText("No classes listed");
+  await expect(page.locator(".tus-exam-note")).toContainText("Revision week");
+});
