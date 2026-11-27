@@ -599,3 +599,63 @@ test("an old Friday class never appears in Today on the next Friday",async({page
   await expect(page.getByText("No classes today.")).toBeVisible();
   await expect(page.locator(".class-card")).toHaveCount(0);
 });
+
+
+test("mobile Exams shows verified programme cards only after exact programme selection",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await selectStoredCourse(page);
+  await mockApi(page);
+  const data={schema:1,last_checked_at:new Date().toISOString(),sources:[
+    {filename:"Bus-Mgt_S1_TT_2026_V3b.xls",url:"https://tus.ie/app/uploads/AcademicServices/Exams/Midlands/FacultyBusinessandHospitality/Bus-Mgt_S1_TT_2026_V3b.xls"}],
+    programmes:{AL_BBSTD_C_2:{name:"Higher Certificate in Business in Business",exams:[
+      {date:"2026-12-09",start:"09:00",end:"12:00",module:"Management Accounting",module_code:"ACCT 06004 S1",room:"B53-B58",source:"Bus-Mgt"},
+      {date:"2026-12-17",start:"09:00",end:"11:00",module:"Business Law",module_code:"LAW 06059 S1",room:"Arena",source:"Bus-Mgt"},
+    ]}};
+  await page.route("**/exam-data.json*",route=>route.fulfill({contentType:"application/json",body:JSON.stringify(data)}));
+  await page.goto("/?tab=exams");
+  await expect(page.locator(".exams-view")).toBeVisible();
+  await expect(page.locator(".exam-list .exam-card")).toHaveCount(0);
+  await page.locator("#exam-programme").selectOption("AL_BBSTD_C_2");
+  await expect(page.locator(".exam-list .exam-card")).toHaveCount(2);
+  await expect(page.locator(".exam-list")).toContainText("Management Accounting");
+  await expect(page.locator(".exam-list")).toContainText("17 Dec 2026");
+  await expect(page.locator(".exam-list")).toContainText("Arena");
+  await expect(page.locator(".exam-advice")).toContainText("optional modules");
+  await expect(page.locator(".exam-source-status a")).toHaveAttribute("href","https://tus.ie/exams/midlands/timetables/");
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth+1)).toBeTruthy();
+});
+test("mobile Week shows a programme exam in December separately from lectures",async({page})=>{
+  await page.setViewportSize({width:390,height:844});
+  await page.addInitScript(({sel})=>{
+    localStorage.setItem("tus-companion-course-v1",JSON.stringify(sel));
+    localStorage.setItem("tus-companion-exam-programme-"+sel.group,"AL_BBSTD_C_2");
+  },{sel:selection});
+  const snap=snapshot();
+  snap.week_number=15;
+  snap.week_start="2026-12-07";
+  snap.week_end="2026-12-13";
+  snap.events=[];
+  snap.next_week={week_number:16,week_start:"2026-12-14",week_end:"2026-12-20",events:[],fetched_at:new Date().toISOString()};
+  const data={schema:1,last_checked_at:new Date().toISOString(),sources:[],programmes:{
+    AL_BBSTD_C_2:{name:"Higher Certificate in Business in Business",exams:[
+      {date:"2026-12-09",start:"09:00",end:"12:00",module:"Management Accounting",module_code:"ACCT 06004 S1",room:"B53-B58",source:"Bus-Mgt"}
+    ]}}};
+  await page.route("**/exam-data.json*",route=>route.fulfill({contentType:"application/json",body:JSON.stringify(data)}));
+  await page.route("**/api/**",async route=>{
+    const path=new URL(route.request().url()).pathname;
+    const json=(body,status=200)=>route.fulfill({status,contentType:"application/json",body:JSON.stringify(body)});
+    if(path==="/api/catalog")return json(catalog);
+    if(path==="/api/meta")return json({version:"1.12.0-cloud",frontend_version:"16.6.9"});
+    if(path==="/api/watch")return json({ok:true,has_snapshot:true,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/timetable/g1")return json({snapshot:snap,sync:{group_id:"g1",status:"ok",last_success_at:new Date().toISOString()}});
+    if(path==="/api/changes/g1")return json([]);
+    if(path==="/api/push/public-key")return json({publicKey:null});
+    return json({detail:"not-found"},404);
+  });
+  await page.goto("/?tab=week");
+  await expect(page.locator(".exam-week-summary")).toBeVisible();
+  await expect(page.locator(".exam-week-summary")).toContainText("Management Accounting");
+  await expect(page.locator(".exam-week-summary")).toContainText("B53-B58");
+  await expect(page.locator(".exam-week-summary")).toContainText("not confirmed personal registrations");
+  await expect(page.locator(".mobile-week-list")).toContainText("No classes listed");
+});
