@@ -622,3 +622,19 @@ button,a,[role="button"],input,select,textarea{touch-action:manipulation}
 .change-detected>strong{display:block;font-size:13px;line-height:1.4;color:#38352e;overflow-wrap:anywhere}
 .change-details{margin-top:13px}
 @media(max-width:560px){.change-context{grid-template-columns:1fr;gap:8px}.change-lesson,.change-detected{padding:12px 13px}.change-week{font-size:15px}}
+
+
+/* v16.6.8: show every day, navigate empty revision weeks and keep exam schedule separate */
+.mobile-week-tabs{display:flex;align-items:stretch;gap:9px;margin:0 0 14px}
+.mobile-week-tab{flex:1 1 0;min-width:0;padding:12px 10px;border:1px solid #ddd5c6;background:#f0ede5;color:#48443b;border-radius:13px;font-size:13px;font-weight:850;cursor:pointer;text-align:center}
+.mobile-week-tab.selected{border-color:#25231e;background:#25231e;color:#fff}
+.mobile-week-tab small{display:block;font-size:10px;font-weight:600;opacity:.8;margin-top:4px}
+.tus-exam-note{margin:17px 0 12px;padding:15px 17px;border:1px solid #dfd3b9;border-radius:16px;background:#f5f2e9;color:#403826;line-height:1.4}
+.tus-exam-note strong{display:block;font-size:13px}
+.tus-exam-note p{font-size:12px;color:#6d6557;margin:8px 0}
+.tus-exam-note a{font-size:12px;color:#725624;font-weight:850;text-decoration:underline;text-underline-offset:3px}
+.week-empty-day{position:absolute;top:28px;left:10px;right:10px;color:#918b7f;font-size:11px;line-height:1.45;text-align:center;pointer-events:none}
+@media(max-width:760px){
+  .mobile-day-picker{display:flex;gap:7px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;scroll-snap-type:x proximity;max-width:100%;padding:3px 1px 12px;margin-bottom:14px}
+  .mobile-day{flex:0 0 clamp(49px,13vw,69px);scroll-snap-align:center;min-height:63px;padding-left:3px;padding-right:3px}
+}
