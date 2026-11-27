@@ -11,7 +11,7 @@ const CATALOG_CACHE='tus-companion-catalog-v1';
 const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
 const MAP='https://app.mappedin.com/map/68b1b5dd74254a000bbf174b';
 const LEGAL_VERSION='2026-09-30';
-const CLIENT_VERSION='16.6.7';
+const CLIENT_VERSION='16.6.8';
 const CLIENT_UPDATE_CHECK_MS=60*1000;
 const FIRST_LOAD_FRESH_MS=2*60*1000;
 const FIRST_LOAD_WAIT_MS=50*1000;
@@ -269,6 +269,10 @@ function loadedWeeks(){
     {week_number:state.snapshot.week_number,week_start:state.snapshot.week_start,week_end:state.snapshot.week_end,fetched_at:state.snapshot.fetched_at,events:state.snapshot.events||[]},
     state.snapshot.next_week
   ].filter(Boolean);
+  // Missing next-week source data is not the same as a confirmed empty week.
+  if(!state.snapshot.next_week && state.snapshot.week_start && state.snapshot.week_end){
+    raw.push({week_number:null,week_start:addIsoDays(state.snapshot.week_start,7),week_end:addIsoDays(state.snapshot.week_end,7),events:[],unavailable:true});
+  }
   const by=new Map();
   for(const w of raw){
     const key=String(w.week_number||w.week_start||'');
@@ -308,15 +312,15 @@ function overlapLayout(list){
   return out;
 }
 function mobileHorizonDays(weeks){
-  const today=isoToday(),end=horizonEnd(),eventDates=new Set(weeks.flatMap(w=>(w.events||[]).map(e=>e.date)).filter(Boolean));
   const out=[];
-  for(let i=0;i<=7;i++){
-    const date=addIsoDays(today,i);
-    if(i!==0&&!eventDates.has(date))continue;
-    const week=weekForDate(weeks,date);
-    out.push({date,day:longDayIso(date),weekStart:week?.week_start||null,weekNumber:week?.week_number||null});
+  for(const w of weeks){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(w.week_start||'')))continue;
+    for(let i=0;i<7;i++){
+      const date=addIsoDays(w.week_start,i);
+      out.push({date,day:longDayIso(date),weekStart:w.week_start,weekNumber:w.week_number||null,unavailable:Boolean(w.unavailable)});
+    }
   }
-  return out;
+  return out.sort((a,b)=>a.date.localeCompare(b.date));
 }
 function selectedMobileDate(weeks){
   const days=mobileHorizonDays(weeks),today=isoToday();
@@ -329,22 +333,47 @@ function selectedMobileDate(weeks){
 function mobileDayPanel(weeks,selected){
   const today=isoToday(),tomorrow=isoDateOffset(1),days=mobileHorizonDays(weeks);
   const selectedMeta=days.find(x=>x.date===selected)||{date:selected,day:longDayIso(selected),weekStart:weekForDate(weeks,selected)?.week_start||null};
-  const selectedWeek=weekForDate(weeks,selected)||weeks[0];
+  const selectedWeek=weekForDate(weeks,selected)||null;
   const list=(selectedWeek?.events||[]).filter(e=>e.date===selected).sort((a,b)=>a.start.localeCompare(b.start));
   const renderMobileClass=e=>{const live=isCurrentEvent(e),changed=changeBadge(e),room=e.room_code||e.room_raw||'Room TBC';const inner=`<span class="mobile-week-time"><b>${esc(formatTime(e.start))}</b><span>${esc(formatTime(e.end))}</span></span><span class="mobile-week-info"><strong>${esc(e.module)}</strong><span class="mobile-week-meta"><b>${esc(room)}</b>${e.type?`<span>${esc(e.type)}</span>`:''}</span>${e.staff?`<small>${esc(e.staff)}</small>`:''}</span><span class="mobile-week-side">${live?'<em>NOW</em>':''}${changed?'<small class="week-changed-tag">'+esc(changed)+'</small>':''}${e.room_code?'<span aria-hidden="true">›</span>':''}</span>`;return e.room_code?`<button class="mobile-week-card ${live?'current':''}" style="${subjectStyle(e.module)}" data-map-room="${esc(e.room_code)}" aria-label="${esc(e.module)}, ${esc(formatRange(e))}, ${esc(room)}. Open campus map.">${inner}</button>`:`<div class="mobile-week-card no-route ${live?'current':''}" style="${subjectStyle(e.module)}">${inner}</div>`};
-  const classes=list.length?renderDayTimeline(list,renderMobileClass,'mobile-week-break'):`<div class="mobile-week-empty">No classes on ${esc(longDayIso(selected)||'this day')}.</div>`;
+  const emptyText=selectedWeek?.unavailable
+    ?'The timetable for this week has not been loaded from TUS yet. Check the official timetable.'
+    :'No classes listed for this day in the TUS teaching timetable. Exams are published separately.';
+  const classes=list.length?renderDayTimeline(list,renderMobileClass,'mobile-week-break'):`<div class="mobile-week-empty">${esc(emptyText)}</div>`;
   const count=list.length,context=selected===today?'TODAY':selected===tomorrow?'TOMORROW':String(selectedMeta?.day||longDayIso(selected)||'').toUpperCase();
   const heading=`<div><p>${esc(context)}</p><h2>${esc(selectedMeta?.day||longDayIso(selected))}${selected?` · ${esc(shortDateIso(selected))}`:''}</h2></div><span>${count} ${count===1?'class':'classes'}</span>`;
   return {heading,classes,weekStart:selectedMeta?.weekStart||selectedWeek?.week_start||null};
 }
+function examPeriodNotice(date){
+  // Official academic/exam periods for TUS Midlands 2026/27; not individual exams.
+  if(!date||date<'2026-11-23'||date>'2026-12-18')return '';
+  const phase=date>='2026-12-05'?'Examination period':date>='2026-11-30'?'Revision week':'End of teaching term';
+  return '<aside class="tus-exam-note" role="note"><strong>'+esc(phase)+' · TUS Athlone</strong>'+
+    '<p>Revision week begins 30 Nov. Semester 1 exams: 5–18 Dec 2026. Exam dates, rooms and times are published separately from the teaching timetable.</p>'+
+    '<a href="https://tus.ie/exams/midlands/timetables/" target="_blank" rel="noopener noreferrer">Check official exam timetable ↗</a>'+
+    '</aside>';
+}
 function renderMobileWeek(weeks){
   if(!weeks.length)return '<div class="mobile-week"><div class="mobile-week-empty">No timetable data available.</div></div>';
-  const selected=selectedMobileDate(weeks),today=isoToday(),days=mobileHorizonDays(weeks),panel=mobileDayPanel(weeks,selected);
-  const picker=days.map((x,i)=>{
-    const isToday=x.date===today,isSelected=x.date===selected,isWeekStart=i>0&&x.weekStart!==days[i-1]?.weekStart;
-    return `<button class="mobile-day ${isSelected?'selected':''} ${isToday?'today':''} ${isWeekStart?'week-start':''}" data-week-date="${esc(x.date)}" data-week-start="${esc(x.weekStart||'')}" aria-pressed="${isSelected?'true':'false'}"><b>${esc((x.day||'').slice(0,3))}</b><span>${esc(shortDateIso(x.date)||'—')}</span></button>`;
+  const selected=selectedMobileDate(weeks),today=isoToday(),activeWeek=weekForDate(weeks,selected)||weeks[0];
+  const days=mobileHorizonDays(weeks).filter(day=>day.weekStart===activeWeek?.week_start);
+  const panel=mobileDayPanel(weeks,selected);
+  const current=weekForDate(weeks,today)||weeks[0];
+  const weekTabs=weeks.map(w=>'<button type="button" class="mobile-week-tab '+(w.week_start===activeWeek?.week_start?'selected':'')+
+    '" data-mobile-week="'+esc(w.week_start||'')+'" aria-pressed="'+(w.week_start===activeWeek?.week_start?'true':'false')+'">'+
+    esc(weekChipLabel(w,current))+'<small>'+esc(shortDateIso(w.week_start))+'–'+esc(shortDateIso(w.week_end))+'</small></button>').join('');
+  const picker=days.map(x=>{
+    const isToday=x.date===today,isSelected=x.date===selected;
+    return '<button class="mobile-day '+(isSelected?'selected':'')+' '+(isToday?'today':'')+
+      '" data-week-date="'+esc(x.date)+'" data-week-start="'+esc(x.weekStart||'')+
+      '" aria-pressed="'+(isSelected?'true':'false')+'"><b>'+esc((x.day||'').slice(0,3))+
+      '</b><span>'+esc(shortDateIso(x.date)||'—')+'</span></button>';
   }).join('');
-  return `<div class="mobile-week"><div class="mobile-day-picker" aria-label="Choose day">${picker}</div><div class="mobile-week-heading">${panel.heading}</div><div class="mobile-week-list">${panel.classes}</div></div>`;
+  return '<div class="mobile-week"><div class="mobile-week-tabs">'+weekTabs+'</div>'+
+    '<div class="mobile-day-picker" aria-label="Choose day">'+picker+'</div>'+
+    '<div class="mobile-week-heading">'+panel.heading+'</div>'+
+    '<div class="mobile-week-list">'+panel.classes+'</div>'+
+    examPeriodNotice(selected)+'</div>';
 }
 function bindMapButtons(root=APP){
   root.querySelectorAll?.('[data-map-room]').forEach(b=>b.onclick=()=>{const room=(b.dataset.mapRoom||'').trim();if(room)window.open(mapUrl(room),'_blank','noopener,noreferrer')});
@@ -365,17 +394,12 @@ function updateMobileWeekDay(date,weekStart){
   const title=APP.querySelector('main.week-app header h1');
   if(title)title.textContent=weekPageTitle();
 }
-function desktopDisplayDates(selectedWeek,currentWeek){
-  const today=isoToday(),end=horizonEnd(),events=selectedWeek?.events||[],eventDates=new Set(events.map(e=>e.date).filter(Boolean)),out=[];
-  for(let i=0;i<7;i++){
+function desktopDisplayDates(selectedWeek){
+  if(!selectedWeek?.week_start)return [];
+  return Array.from({length:7},(_,i)=>{
     const date=addIsoDays(selectedWeek.week_start,i);
-    const inCurrent=selectedWeek.week_start===currentWeek?.week_start;
-    const pastCurrent=inCurrent&&date<today&&eventDates.has(date);
-    const futureVisible=date>=today&&date<=end&&(date===today||eventDates.has(date));
-    if(pastCurrent||futureVisible)out.push({date,day:longDayIso(date)});
-  }
-  if(!out.length&&selectedWeek?.week_start)out.push({date:selectedWeek.week_start,day:longDayIso(selectedWeek.week_start)});
-  return out;
+    return {date,day:longDayIso(date)};
+  });
 }
 function renderWeek(){
   const weeks=loadedWeeks(),currentWeek=weekForDate(weeks,isoToday())||weeks[0],selectedWeek=selectedWeekSnapshot(weeks)||currentWeek||{events:[],week_start:null,week_number:null};
@@ -386,11 +410,11 @@ function renderWeek(){
   const hours=[];for(let m=start;m<=end;m+=60)hours.push(m);
   const header=displayDates.map((x,i)=>{const isToday=x.date===isoToday();return `<div class="week-day-head ${isToday?'is-today':''}" style="grid-column:${i+2}"><b>${esc((x.day||'').slice(0,3))}</b><span>${esc(shortDateIso(x.date))}</span>${isToday?'<small>TODAY</small>':''}</div>`}).join('');
   const times=hours.map(m=>`<span class="week-time-label" style="top:${((m-start)/60)*pxPerHour}px">${esc(formatTime(`${Math.floor(m/60)}:00`))}</span>`).join('');
-  const dayCols=displayDates.map((x,dayIndex)=>{const list=events.filter(e=>e.date===x.date),isToday=x.date===isoToday();const breaks=dayTimelineItems(list).filter(item=>item.kind==='break').map(gap=>{const top=((gap.start-start)/60)*pxPerHour,height=Math.max(1,(gap.duration/60)*pxPerHour),label=`Break · ${formatBreakDuration(gap.duration)}`,showLabel=height>=18;return `<div class="week-break ${showLabel?'':'micro'}" style="top:${top}px;height:${height}px" title="${esc(label)}" aria-label="${esc(label)}">${showLabel?`<span>${esc(label)}</span>`:''}</div>`}).join('');const blocks=overlapLayout(list).map(({e,lane,lanes})=>{const duration=Math.max(0,timeMinutes(e.end)-timeMinutes(e.start)),top=((timeMinutes(e.start)-start)/60)*pxPerHour,height=Math.max(54,(duration/60)*pxPerHour-4),left=(lane/lanes)*100,width=100/lanes;const current=isCurrentEvent(e),changed=changeBadge(e),titleLength=String(e.module||'').trim().length,titleClass=titleLength>44?'title-very-long':titleLength>28?'title-long':'',densityClass=duration<=60?'compact':'',laneClass=lanes>1?'lanes-narrow':'';return `<button class="week-event ${current?'current':''} ${titleClass} ${densityClass} ${laneClass}" style="${subjectStyle(e.module)};top:${top}px;height:${height}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px)" ${e.room_code?`data-map-room="${esc(e.room_code)}"`:''} title="${esc(e.module)} · ${esc(formatRange(e))}"><span class="week-event-time">${esc(formatTime(e.start))}</span><strong>${esc(e.module)}</strong><span class="week-event-room">${esc(e.room_code||e.room_raw||'')}</span>${changed?'<small class="week-changed-tag">'+esc(changed)+'</small>':''}${current?'<em>NOW</em>':''}</button>`}).join('');return `<div class="week-day-col ${isToday?'is-today':''}" style="grid-column:${dayIndex+2};height:${totalHeight}px">${breaks}${blocks}</div>`}).join('');
-  const selectableWeeks=weeks.filter(w=>w.week_start===currentWeek?.week_start||(w.events||[]).some(e=>e.date>=isoToday()&&e.date<=horizonEnd()));
+  const dayCols=displayDates.map((x,dayIndex)=>{const list=events.filter(e=>e.date===x.date),isToday=x.date===isoToday();const empty=list.length?'':'<span class="week-empty-day">'+(selectedWeek.unavailable?'Not yet loaded':'No classes listed')+'</span>';const breaks=dayTimelineItems(list).filter(item=>item.kind==='break').map(gap=>{const top=((gap.start-start)/60)*pxPerHour,height=Math.max(1,(gap.duration/60)*pxPerHour),label=`Break · ${formatBreakDuration(gap.duration)}`,showLabel=height>=18;return `<div class="week-break ${showLabel?'':'micro'}" style="top:${top}px;height:${height}px" title="${esc(label)}" aria-label="${esc(label)}">${showLabel?`<span>${esc(label)}</span>`:''}</div>`}).join('');const blocks=overlapLayout(list).map(({e,lane,lanes})=>{const duration=Math.max(0,timeMinutes(e.end)-timeMinutes(e.start)),top=((timeMinutes(e.start)-start)/60)*pxPerHour,height=Math.max(54,(duration/60)*pxPerHour-4),left=(lane/lanes)*100,width=100/lanes;const current=isCurrentEvent(e),changed=changeBadge(e),titleLength=String(e.module||'').trim().length,titleClass=titleLength>44?'title-very-long':titleLength>28?'title-long':'',densityClass=duration<=60?'compact':'',laneClass=lanes>1?'lanes-narrow':'';return `<button class="week-event ${current?'current':''} ${titleClass} ${densityClass} ${laneClass}" style="${subjectStyle(e.module)};top:${top}px;height:${height}px;left:calc(${left}% + 3px);width:calc(${width}% - 6px)" ${e.room_code?`data-map-room="${esc(e.room_code)}"`:''} title="${esc(e.module)} · ${esc(formatRange(e))}"><span class="week-event-time">${esc(formatTime(e.start))}</span><strong>${esc(e.module)}</strong><span class="week-event-room">${esc(e.room_code||e.room_raw||'')}</span>${changed?'<small class="week-changed-tag">'+esc(changed)+'</small>':''}${current?'<em>NOW</em>':''}</button>`}).join('');return `<div class="week-day-col ${isToday?'is-today':''}" style="grid-column:${dayIndex+2};height:${totalHeight}px">${breaks}${blocks}${empty}</div>`}).join('');
+  const selectableWeeks=weeks;
   const weekPicker=selectableWeeks.map(w=>`<button class="desktop-week-chip ${w.week_start===selectedWeek.week_start?'selected':''}" data-week-select="${esc(w.week_start||'')}">${esc(weekChipLabel(w,currentWeek))}</button>`).join('');
   const columnCount=Math.max(1,displayDates.length),boardStyle=`grid-template-columns:72px repeat(${columnCount},minmax(230px,1fr));min-width:${Math.max(760,72+columnCount*230)}px`;
-  const desktop=`<div class="week-desktop"><div class="desktop-week-picker" aria-label="Choose week">${weekPicker}</div><div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board" style="${boardStyle}"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div></div>`;
+  const desktop=`<div class="week-desktop"><div class="desktop-week-picker" aria-label="Choose week">${weekPicker}</div>${examPeriodNotice(selectedWeek?.week_start||isoToday())}<div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board" style="${boardStyle}"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div></div>`;
   return `<section class="week-section">${renderMobileWeek(weeks)}${desktop}</section>`;
 }
 function changeLabel(type){
@@ -513,6 +537,14 @@ function bindCommon(){
     state.weekStart=weekForDate(weeks,date)?.week_start||null;
     state.tab='week';
     history.replaceState(null,'','/?tab=week');
+    render();
+  });
+  APP.querySelectorAll('[data-mobile-week]').forEach(b=>b.onclick=()=>{
+    const weeks=loadedWeeks(),week=weeks.find(w=>w.week_start===b.dataset.mobileWeek);
+    if(!week)return;
+    const today=isoToday();
+    state.weekDate=week.week_start<=today&&week.week_end>=today?today:week.week_start;
+    state.weekStart=week.week_start;
     render();
   });
   APP.querySelectorAll('[data-week-date]').forEach(b=>b.onclick=()=>updateMobileWeekDay(b.dataset.weekDate,b.dataset.weekStart));
