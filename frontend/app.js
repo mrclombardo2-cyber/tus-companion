@@ -375,7 +375,7 @@ function renderMobileWeek(weeks){
     '<div class="mobile-day-picker" aria-label="Choose day">'+picker+'</div>'+
     '<div class="mobile-week-heading">'+panel.heading+'</div>'+
     '<div class="mobile-week-list">'+panel.classes+'</div>'+
-    examPeriodNotice(selected)+'</div>';
+    examWeekSummary(state.examData,selectedExamProgramme(),activeWeek)+examPeriodNotice(selected)+'</div>';
 }
 function bindMapButtons(root=APP){
   root.querySelectorAll?.('[data-map-room]').forEach(b=>b.onclick=()=>{const room=(b.dataset.mapRoom||'').trim();if(room)window.open(mapUrl(room),'_blank','noopener,noreferrer')});
@@ -417,7 +417,30 @@ function renderWeek(){
   const weekPicker=selectableWeeks.map(w=>`<button class="desktop-week-chip ${w.week_start===selectedWeek.week_start?'selected':''}" data-week-select="${esc(w.week_start||'')}">${esc(weekChipLabel(w,currentWeek))}</button>`).join('');
   const columnCount=Math.max(1,displayDates.length),boardStyle=`grid-template-columns:72px repeat(${columnCount},minmax(230px,1fr));min-width:${Math.max(760,72+columnCount*230)}px`;
   const desktop=`<div class="week-desktop"><div class="desktop-week-picker" aria-label="Choose week">${weekPicker}</div>${examPeriodNotice(selectedWeek?.week_start||isoToday())}<div class="week-caption"><span>Tap a class to open its room on the campus map</span><span>${esc(formatTime(`${Math.floor(start/60)}:00`))}–${esc(formatTime(`${Math.floor(end/60)}:00`))}</span></div><div class="week-scroll"><div class="week-board" style="${boardStyle}"><div class="week-head-spacer"></div>${header}<div class="week-time-col" style="height:${totalHeight}px">${times}</div>${dayCols}</div></div></div>`;
-  return `<section class="week-section">${renderMobileWeek(weeks)}${desktop}</section>`;
+  return `<section class="week-section">${renderMobileWeek(weeks)}${desktop}${examWeekSummary(state.examData,selectedExamProgramme(),selectedWeek)}</section>`;
+}
+async function refreshExamData(){
+  try{
+    const ctrl=new AbortController();
+    const timeout=setTimeout(()=>ctrl.abort(),12000);
+    let response;
+    try{response=await fetch('/exam-data.json?t='+Date.now(),{cache:'no-store',signal:ctrl.signal});}
+    finally{clearTimeout(timeout);}
+    if(!response.ok)throw new Error('source-unavailable');
+    const data=await response.json();
+    if(data?.schema!==1||typeof data.programmes!=='object'||!Array.isArray(data.sources))
+      throw new Error('exam-schema-invalid');
+    state.examData=data;
+    state.examError=false;
+  }catch{state.examError=true;}
+  if(state.selection&&['exams','week'].includes(state.tab))render();
+}
+function selectedExamProgramme(){
+  if(!state.examData)return null;
+  const key='tus-companion-exam-programme-'+String(state.selection?.group||'');
+  const override=localStorage.getItem(key);
+  if(override&&state.examData.programmes?.[override])return override;
+  return examProgrammeForSelection(state.selection,state.examData);
 }
 function changeLabel(type){
   return ({
@@ -531,6 +554,13 @@ function bindCommon(){
   const retrySync=document.getElementById('retry-sync');
   if(retrySync)retrySync.onclick=async()=>{retrySync.disabled=true;cachedRecoveryStep=0;clearCachedRecovery();await watchAndLoad(true);render()};
   APP.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{const next=b.dataset.tab;if(next==='week'&&state.tab!=='week'){state.weekDate=isoToday();state.weekStart=weekForDate(loadedWeeks(),state.weekDate)?.week_start||null}state.tab=next;history.replaceState(null,'',state.tab==='today'?'/' : `/?tab=${state.tab}`);render()});
+  const examSelect=APP.querySelector('#exam-programme');
+  if(examSelect)examSelect.onchange=()=>{
+    const key='tus-companion-exam-programme-'+String(state.selection?.group||'');
+    if(examSelect.value)localStorage.setItem(key,examSelect.value);
+    else localStorage.removeItem(key);
+    render();
+  };
   APP.querySelectorAll('[data-change-date]').forEach(b=>b.onclick=()=>{
     const date=b.dataset.changeDate;
     const weeks=loadedWeeks();
