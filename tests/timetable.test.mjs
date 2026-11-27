@@ -338,3 +338,26 @@ test("change detection includes correct weekday and Irish time, not lesson weekd
   assert.match(formatted,/Irish time/);
   assert.equal(formatDetectionIrish("not-a-date"),"Detection time unavailable");
 });
+
+
+test("next-week TUS outage never blocks storing a valid current-week timetable",()=>{
+  const worker=readFileSync(new URL("../cloud/worker/src/index.js",import.meta.url),"utf8");
+  const part=worker.split("async function syncOneGroup(env, scientia, item)")[1].split("async function runGroupJob")[0];
+  assert.match(part,/let nextWeekFetchError = false/);
+  assert.match(part,/try \{\s*const nextSnapshot = await fetchValidatedWeek/);
+  assert.match(part,/nextWeek = null;\s*nextWeekFetchError = true;/);
+  assert.match(part,/snapshot\.next_week_unavailable = nextWeekFetchError;/);
+  assert.match(part,/if \(\/source-session\|delegated-token-rejected\|microsoft-token\/i\.test\(reason\)\) throw err/);
+  assert.match(part,/await saveResultPayload\(env, \{ group_id: groupId, snapshot/);
+});
+test("Week navigation does not omit days with no lectures or present missing source as absence",()=>{
+  const src=readFileSync(new URL("../frontend/app.js",import.meta.url),"utf8");
+  const days=src.split("function mobileHorizonDays(weeks)")[1].split("function selectedMobileDate")[0];
+  assert.match(days,/for\(let i=0;i<7;i\+\+\)/);
+  assert.doesNotMatch(days,/eventDates\.has\(date\)/);
+  assert.match(src,/class="mobile-week-tab/);
+  assert.match(src,/selectedWeek\?\.unavailable/);
+  assert.match(src,/The timetable for this week has not been loaded/);
+  assert.match(src,/https:\/\/tus\.ie\/exams\/midlands\/timetables\//);
+  assert.match(src,/const selectableWeeks=weeks;/);
+});

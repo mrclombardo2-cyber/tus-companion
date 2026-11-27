@@ -23,6 +23,18 @@ Worker API + PWA
 - Non viene più pre-caricato continuamente il catalogo dei gruppi non usati.
 - GitHub Actions esegue test automatici, deploy e verifica live.
 
+## Week and examinations (v16.6.8)
+
+The **Week** view always displays all seven days of the TUS teaching-timetable week and exposes a **This week / Next week** selector, even if there are no classroom events. An empty day is displayed as `No classes listed for this day in the TUS teaching timetable`. When the next-week data was not successfully fetched, it is **not** treated as an empty timetable; the user sees `The timetable for this week has not been loaded from TUS yet`.
+
+This resolves the issue where the mobile Week showed only **Friday 27 Nov 2026** at the end of the taught term: the previous UI filtered out all dates without class events, hiding both remaining days and the next-week selector. Both mobile and desktop now retain calendar navigation irrespective of event counts. In addition, Today matches classes by exact ISO date from both current and confirmed next-week snapshots, preventing last week's Friday classes from incorrectly reappearing in revision week.
+
+**University calendar (TUS 2026/27):** the week beginning **30 November 2026** is `Revision week`; exams for **Midlands/Athlone** are published separately for **5–18 December 2026**. The application provides an official link on the Week screen during this period: [TUS Midlands Exam Timetables](https://tus.ie/exams/midlands/timetables/). The source of exam dates, room assignments and any revisions is exclusively TUS; the app does **not** invent individual student exam times or treat an absence of classroom lessons as absence of exams.
+
+**Collector fallback:** if fetching a next-week timetable fails for a non-authentication reason (for example a timetable portal transition at term end), the last verified current-week snapshot is still saved, and the next week is visibly marked unavailable. Authentication/MFA failures remain critical errors.
+
+Official references: [TUS academic calendar](https://tus.ie/registry/academic-calendar/), [Midlands exam timetable](https://tus.ie/exams/midlands/timetables/).
+
 ## Changelog v16.6.7: quale settimana e quale giorno è cambiata una lezione
 
 Nella schermata **Changes**, ogni gruppo di modifiche mostra due sezioni separate:
