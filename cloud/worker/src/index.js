@@ -7,7 +7,7 @@ import { delegationReadiness, delegatedAccessToken, delegatedAuthStatus, startDe
 
 const APP_VERSION = "1.12.0-cloud";
 const LEGAL_VERSION = "2026-09-30";
-const FRONTEND_VERSION = "16.6.7";
+const FRONTEND_VERSION = "16.6.8";
 const INTEREST_TTL_HOURS = 6;
 const INTEREST_TOUCH_MINUTES = 15;
 const CATALOG_REFRESH_HOURS = 24;
@@ -1087,11 +1087,24 @@ async function syncOneGroup(env, scientia, item) {
     const nextWeekMatches = Number(nextWeek?.week_number || 0) === expectedNextWeek;
     const nextWeekAge = ageMs(nextWeek?.fetched_at);
     const nextWeekStale = !nextWeek?.fetched_at || nextWeekAge >= NEXT_WEEK_REFRESH_MINUTES * 60_000;
+    let nextWeekFetchError = false;
     if (!nextWeek || !nextWeekMatches || nextWeekStale) {
-      const nextSnapshot = await fetchValidatedWeek(scientia, departmentId, groupId, "n");
-      nextWeek = compactWeekSnapshot(nextSnapshot);
+      try {
+        const nextSnapshot = await fetchValidatedWeek(scientia, departmentId, groupId, "n");
+        nextWeek = compactWeekSnapshot(nextSnapshot);
+      } catch (err) {
+        const reason = String(err?.message || err);
+        if (/source-session|delegated-token-rejected|microsoft-token/i.test(reason)) throw err;
+        // The current week is verified independently. A missing next-week
+        // source must not block saving the fresh current week's lectures.
+        // Never masquerade a failed next-week fetch as a confirmed empty week.
+        console.warn("next-week-unavailable", groupId, reason);
+        nextWeek = null;
+        nextWeekFetchError = true;
+      }
     }
     snapshot.next_week = nextWeek;
+    snapshot.next_week_unavailable = nextWeekFetchError;
 
     const changesList = diffSnapshots(previous, snapshot);
     const enriched = await enrichChanges(groupId, changesList);
