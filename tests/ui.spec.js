@@ -610,7 +610,7 @@ test("mobile Exams shows verified programme cards only after exact programme sel
     programmes:{AL_BBSTD_C_2:{name:"Higher Certificate in Business in Business",exams:[
       {date:"2026-12-09",start:"09:00",end:"12:00",module:"Management Accounting",module_code:"ACCT 06004 S1",room:"B53-B58",source:"Bus-Mgt"},
       {date:"2026-12-17",start:"09:00",end:"11:00",module:"Business Law",module_code:"LAW 06059 S1",room:"Arena",source:"Bus-Mgt"},
-    ]}};
+    ]}}};
   await page.route("**/exam-data.json*",route=>route.fulfill({contentType:"application/json",body:JSON.stringify(data)}));
   await page.goto("/?tab=exams");
   await expect(page.locator(".exams-view")).toBeVisible();
