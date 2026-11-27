@@ -222,7 +222,7 @@ function render(){
 }
 
 function renderToday(){
-  const today=visibleEvents().filter(e=>e.date===isoToday()),next=nextEvent();
+  const today=visibleUpcomingEvents().filter(e=>e.date===isoToday()),next=nextEvent();
   return `${next?`<section class="hero ${isCurrentEvent(next)?'hero-live':''}"><p class="kicker gold">${isCurrentEvent(next)?`HAPPENING NOW${eventWeekday(next)?` (${eventWeekday(next)})`:''}`:`NEXT CLASS${nextClassContext(next)?` (${nextClassContext(next)})`:''}`}</p><h2>${esc(next.module)}</h2><div class="hero-meta"><span>${esc(formatRange(next))}</span><span>${esc(next.room_code||next.room_raw)}</span></div><p>${esc(next.room_name||next.staff)}</p>${next.room_code?`<button class="hero-button" data-map-room="${esc(next.room_code)}">Find room</button>`:''}</section>`:''}<section><div class="section-head"><h2>Today</h2><span>${today.length} classes</span></div>${today.length?renderDayTimeline(today,e=>card(e),'today-break'):'<div class="empty">No classes today.</div>'}</section>`;
 }
 function timeMinutes(value){const [h,m='0']=String(value||'0:0').split(':').map(Number);return (Number.isFinite(h)?h:0)*60+(Number.isFinite(m)?m:0)}
