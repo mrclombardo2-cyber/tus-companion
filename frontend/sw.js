@@ -1,5 +1,5 @@
-const CLIENT_VERSION='16.6.7';
-const CACHE='tus-companion-v16.6.7';
+const CLIENT_VERSION='16.6.8';
+const CACHE='tus-companion-v16.6.8';
 const CORE=['/','/styles.css','/app.js','/change-utils.js','/manifest.webmanifest','/icon-192.png','/icon-512.png'];
 
 function canonicalRequest(request){
